@@ -34,11 +34,11 @@ sdboot_render_entry() {
     local version initrd
     version=$(sdboot_version_of "$snap")
     printf 'title    %s\n' "$label"
-    printf 'sort-key silverblue\n'
+    printf 'sort-key %s\n' "${SB_SORT_KEY:-silverblue}"
     printf 'version  %s\n' "$version"
-    printf 'linux    /silverblue/%s/%s\n' "$snap" "$kernel"
+    printf 'linux    /%s/%s/%s\n' "${SB_ESP_SUBDIR:-silverblue}" "$snap" "$kernel"
     for initrd in "$@"; do
-        printf 'initrd   /silverblue/%s/%s\n' "$snap" "$initrd"
+        printf 'initrd   /%s/%s/%s\n' "${SB_ESP_SUBDIR:-silverblue}" "$snap" "$initrd"
     done
     printf 'options  root=UUID=%s rootflags=subvol=%s rootfstype=btrfs rw%s\n' \
         "$uuid" "$snap" "${SB_KERNEL_OPTS:+ $SB_KERNEL_OPTS}"
@@ -65,7 +65,7 @@ sdboot_initrd_list() {
 #   $1 snap  $2 label  $3 pool_uuid  $4 snapshot_boot_dir  $5 efi_dir  $6 tries
 sdboot_register_entry() {
     local snap=$1 label=$2 uuid=$3 src_boot=$4 efi=$5 tries=$6
-    local dst="$efi/silverblue/$snap"
+    local dst="$efi/${SB_ESP_SUBDIR:-silverblue}/$snap"
     local entries="$efi/loader/entries"
     local img kernel="" initrds=()
 
@@ -133,6 +133,6 @@ sdboot_prune_entry() {
     for f in "$efi/loader/entries/${snap}.conf" "$efi/loader/entries/${snap}+"*.conf; do
         [[ -e "$f" ]] && sb_run rm -f -- "$f"
     done
-    [[ -d "$efi/silverblue/$snap" ]] && sb_run rm -rf -- "$efi/silverblue/$snap"
+    [[ -d "$efi/${SB_ESP_SUBDIR:-silverblue}/$snap" ]] && sb_run rm -rf -- "$efi/${SB_ESP_SUBDIR:-silverblue}/$snap"
     return 0
 }

@@ -1,5 +1,5 @@
 [Unit]
-Description=Silverblue rollback to the previous root
+Description=Arch Silverblue rollback to the previous root
 Documentation=https://github.com/ofekb/arch-silverblue
 # Pulled in by silverblue-mark-good.service's OnFailure=. Requiring the rollback service
 # makes starting this target perform the rollback and reboot.

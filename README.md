@@ -14,7 +14,8 @@ silverblue-update --dry-run  # show the plan without changing anything
 ```
 
 See [`docs/update-flow.md`](docs/update-flow.md) for the full update/rollback flow with a
-diagram.
+diagram. To fork this into your own branded distro, see [`DERIVING.md`](DERIVING.md) — you edit
+one file ([`config/distro.conf`](config/distro.conf)) and rebuild.
 
 ## How it works (in one paragraph)
 

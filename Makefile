@@ -25,9 +25,11 @@ SHELL_FILES := \
 	tests/unit/mocks/grub-editenv \
 	tests/unit/mocks/arch-chroot
 
-IMAGE := arch-silverblue-iso
+# Docker image tag derived from the distro id in config/distro.conf (bash, not sh: the config
+# uses arrays). Falls back to the upstream name if the config is missing.
+IMAGE := $(shell bash -c '. config/distro.conf 2>/dev/null && printf "%s-iso" "$$DISTRO_ID"' 2>/dev/null || echo arch-silverblue-iso)
 ISO_STAMP := iso/output/.built
-ISO_INPUTS := iso/Dockerfile iso/build.sh $(shell find iso/airootfs src -type f 2>/dev/null)
+ISO_INPUTS := iso/Dockerfile iso/build.sh $(shell find iso/airootfs src config -type f 2>/dev/null)
 
 .PHONY: all lint test-unit verify-units build-iso rebuild-iso test-qemu test ci clean help
 
@@ -43,8 +45,10 @@ help:
 	@echo "  clean         remove build/test artifacts"
 
 # --- Fast inner loop (host-only, no docker/qemu) ------------------------------------------
+# --source-path=SCRIPTDIR lets each script's `# shellcheck source=` directive resolve relative
+# to its own directory (build.sh / the autoinstaller follow config/distro.conf this way).
 lint:
-	$(NIXRUN) shellcheck -x $(SHELL_FILES)
+	$(NIXRUN) shellcheck -x --source-path=SCRIPTDIR $(SHELL_FILES)
 
 test-unit:
 	$(NIXRUN) bats tests/unit

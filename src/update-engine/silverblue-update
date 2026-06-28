@@ -30,6 +30,9 @@
 : "${SB_TRIES:=3}"                            # systemd-boot boot-counting tries
 : "${SB_LIB_DIR:=}"                           # dir containing *-helpers.sh (auto-detected)
 : "${SB_VERIFY_UNIT:=/usr/lib/systemd/system/silverblue-mark-good.service}"
+: "${SB_DISTRO_NAME:=Arch Silverblue}"        # human-readable name used in boot-entry titles
+: "${SB_ESP_SUBDIR:=silverblue}"              # per-snapshot kernel dir on the ESP (systemd-boot)
+: "${SB_SORT_KEY:=silverblue}"                # systemd-boot 'sort-key' grouping value
 
 # --- Runtime state (populated at run time) -------------------------------------------------
 DRY_RUN=false
@@ -110,7 +113,7 @@ label_for() {
     ts=${snap#root-}
     d=${ts%%-*}
     t=${ts#*-}
-    printf 'Arch Silverblue %s-%s-%s %s:%s\n' \
+    printf '%s %s-%s-%s %s:%s\n' "$SB_DISTRO_NAME" \
         "${d:0:4}" "${d:4:2}" "${d:6:2}" "${t:0:2}" "${t:2:2}"
 }
 

@@ -15,15 +15,25 @@ set -euo pipefail
 marker() { printf '%s\n' "$*"; }
 fwc() { cat "/sys/firmware/qemu_fw_cfg/by_name/$1/raw" 2>/dev/null || true; }
 
+# Load the derived-distro configuration that build.sh shipped into the ISO. A fixed,
+# id-independent path so this script can find it without already knowing the distro id.
+DISTRO_CONF=${DISTRO_CONF:-/usr/local/share/distro/distro.conf}
+OSRELEASE_IN=${OSRELEASE_IN:-/usr/local/share/distro/os-release.in}
+# shellcheck source=../../../../../config/distro.conf
+source "$DISTRO_CONF"
+
+# Escape a string for the replacement side of a sed 's|...|...|' command.
+esc() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
+
 install_sdboot() {
     local mnt=$1 snap=$2 uuid=$3
     local efi="$mnt/efi"
     bootctl --esp-path="$efi" install
-    mkdir -p "$efi/EFI/BOOT" "$efi/silverblue/$snap" "$efi/loader/entries"
+    mkdir -p "$efi/EFI/BOOT" "$efi/$ESP_SUBDIR/$snap" "$efi/loader/entries"
     # Removable fallback so the VM boots even without persisted EFI NVRAM.
     cp "$efi/EFI/systemd/systemd-bootx64.efi" "$efi/EFI/BOOT/BOOTX64.EFI"
-    cp "$mnt/boot/vmlinuz-linux" "$efi/silverblue/$snap/"
-    cp "$mnt/boot/initramfs-linux.img" "$efi/silverblue/$snap/"
+    cp "$mnt/boot/vmlinuz-linux" "$efi/$ESP_SUBDIR/$snap/"
+    cp "$mnt/boot/initramfs-linux.img" "$efi/$ESP_SUBDIR/$snap/"
     # No explicit default= : systemd-boot then selects the newest-version entry, which is how
     # silverblue-update makes a freshly registered root boot next without touching the default.
     cat > "$efi/loader/loader.conf" <<EOF
@@ -31,11 +41,11 @@ timeout 3
 console-mode max
 EOF
     cat > "$efi/loader/entries/$snap.conf" <<EOF
-title    Arch Silverblue (initial) $snap
-sort-key silverblue
+title    $DISTRO_NAME (initial) $snap
+sort-key $SORT_KEY
 version  ${snap#root-}
-linux    /silverblue/$snap/vmlinuz-linux
-initrd   /silverblue/$snap/initramfs-linux.img
+linux    /$ESP_SUBDIR/$snap/vmlinuz-linux
+initrd   /$ESP_SUBDIR/$snap/initramfs-linux.img
 options  root=UUID=$uuid rootflags=subvol=$snap rootfstype=btrfs rw console=ttyS0,115200 console=tty0
 EOF
 }
@@ -58,7 +68,7 @@ if [ -n "\${next_entry}" ]; then
     set recordfail=1; save_env --file \${prefix}/grubenv recordfail
 fi
 if [ "\${recordfail}" = 1 ]; then set timeout=-1; else set timeout=3; fi
-menuentry 'Arch Silverblue (initial) $snap' --id $snap {
+menuentry '$DISTRO_NAME (initial) $snap' --id $snap {
     insmod btrfs
     insmod part_gpt
     search --no-floppy --fs-uuid --set=root $uuid
@@ -76,7 +86,13 @@ configure_pacman_repo() {
 SigLevel = Optional TrustAll
 Server = file:///opt/silverblue/localrepo
 EOF
-    if [[ "$net" != 1 ]]; then
+    if [[ "$net" == 1 ]]; then
+        # Networked install: add the derivative's extra repos (if any) to the target.
+        local r
+        for r in "${EXTRA_REPOS[@]}"; do
+            printf '\n%s\n' "$r" >> "$mnt/etc/pacman.conf"
+        done
+    else
         # Hermetic update test: disable remote repos so `pacman -Syu` only needs the offline
         # file:// repo. Comment each remote section header and its Include/Server lines.
         awk '
@@ -99,7 +115,7 @@ main() {
         exit 0
     fi
     net=${SB_NET:-$(fwc opt/silverblue/net)}; net=${net:-0}
-    bootloader=${SB_BOOTLOADER:-$(fwc opt/silverblue/bootloader)}; bootloader=${bootloader:-systemd-boot}
+    bootloader=${SB_BOOTLOADER:-$(fwc opt/silverblue/bootloader)}; bootloader=${bootloader:-$BOOTLOADER}
     disk=/dev/vda
 
     # shellcheck disable=SC2154   # LINENO is provided by bash
@@ -113,15 +129,15 @@ main() {
     wipefs -a "$disk"
     sgdisk -Z "$disk"
     sgdisk -n1:0:+512M -t1:ef00 -c1:EFI "$disk"
-    sgdisk -n2:0:0     -t2:8300 -c2:silverblue "$disk"
+    sgdisk -n2:0:0     -t2:8300 -c2:"$FS_LABEL" "$disk"
     partprobe "$disk" 2>/dev/null || true
     udevadm settle || true
     sleep 1
     esp="${disk}1"
     rootpart="${disk}2"
 
-    mkfs.fat -F32 -n SB-ESP "$esp"
-    mkfs.btrfs -f -L silverblue "$rootpart"
+    mkfs.fat -F32 -n "$ESP_LABEL" "$esp"
+    mkfs.btrfs -f -L "$FS_LABEL" "$rootpart"
 
     # --- Subvolumes ----------------------------------------------------------------------
     mount "$rootpart" /mnt
@@ -146,14 +162,32 @@ main() {
     done
 
     # --- Base system (no linux-firmware: virtio needs none, and it saves ~700MB) ---------
-    pacstrap -K /mnt base linux mkinitcpio btrfs-progs \
-        arch-install-scripts dosfstools gptfdisk efibootmgr
+    pacstrap -K /mnt "${PKGS_BASE[@]}"
 
     # fstab: omit the '/' line — the root subvolume comes from the kernel cmdline rootflags.
     genfstab -U /mnt | awk '$2 != "/"' > /mnt/etc/fstab
 
-    echo silverblue > /mnt/etc/hostname
-    ln -sf /usr/share/zoneinfo/UTC /mnt/etc/localtime
+    printf '%s\n' "$HOSTNAME" > /mnt/etc/hostname
+    ln -sf "/usr/share/zoneinfo/$TIMEZONE" /mnt/etc/localtime
+
+    # Locale.
+    printf '%s UTF-8\n' "$LOCALE" > /mnt/etc/locale.gen
+    arch-chroot /mnt locale-gen
+    printf 'LANG=%s\n' "$LOCALE" > /mnt/etc/locale.conf
+    if [[ -n "$KEYMAP" ]]; then printf 'KEYMAP=%s\n' "$KEYMAP" > /mnt/etc/vconsole.conf; fi
+
+    # /etc/os-release — a regular file overrides the stock symlink to /usr/lib/os-release.
+    sed -e "s|@DISTRO_NAME@|$(esc "$DISTRO_NAME")|g" \
+        -e "s|@DISTRO_ID@|$(esc "$DISTRO_ID")|g" \
+        -e "s|@DISTRO_VERSION@|$(esc "$DISTRO_VERSION")|g" \
+        -e "s|@DISTRO_VERSION_ID@|$(esc "$DISTRO_VERSION_ID")|g" \
+        -e "s|@DISTRO_ANSI_COLOR@|$(esc "$DISTRO_ANSI_COLOR")|g" \
+        -e "s|@DISTRO_HOME_URL@|$(esc "$DISTRO_HOME_URL")|g" \
+        -e "s|@DISTRO_DOC_URL@|$(esc "$DISTRO_DOC_URL")|g" \
+        -e "s|@DISTRO_SUPPORT_URL@|$(esc "$DISTRO_SUPPORT_URL")|g" \
+        -e "s|@DISTRO_BUG_URL@|$(esc "$DISTRO_BUG_URL")|g" \
+        "$OSRELEASE_IN" > /mnt/etc/os-release
+
     arch-chroot /mnt passwd -d root
 
     # initramfs must carry btrfs (autodetect can't see it from the live medium's root).
@@ -168,20 +202,20 @@ ExecStart=
 ExecStart=-/sbin/agetty -o '-p -- \\u' --autologin root --keep-baud 115200,38400,9600 - $TERM
 EOF
 
-    # --- Silverblue tools into the target ------------------------------------------------
-    install -Dm0755 /usr/bin/silverblue-update /mnt/usr/bin/silverblue-update
-    mkdir -p /mnt/usr/lib/silverblue
-    cp -a /usr/lib/silverblue/. /mnt/usr/lib/silverblue/
+    # --- Distro tools into the target (already renamed/rendered in the ISO by build.sh) ---
+    install -Dm0755 "/usr/bin/${BIN_PREFIX}-update" "/mnt/usr/bin/${BIN_PREFIX}-update"
+    mkdir -p "/mnt${LIB_DIR}"
+    cp -a "${LIB_DIR}/." "/mnt${LIB_DIR}/"
     # Ensure the entry-point scripts are executable on the target regardless of source modes.
-    chmod 0755 /mnt/usr/lib/silverblue/silverblue-mark-good.sh \
-        /mnt/usr/lib/silverblue/silverblue-rollback.sh
+    chmod 0755 "/mnt${LIB_DIR}/${UNIT_PREFIX}-mark-good.sh" \
+        "/mnt${LIB_DIR}/${UNIT_PREFIX}-rollback.sh"
     local u
-    for u in silverblue-mark-good.service silverblue-rollback.service silverblue-rollback.target; do
+    for u in "${UNIT_PREFIX}-mark-good.service" "${UNIT_PREFIX}-rollback.service" "${UNIT_PREFIX}-rollback.target"; do
         install -Dm0644 "/usr/lib/systemd/system/$u" "/mnt/usr/lib/systemd/system/$u"
     done
-    install -Dm0644 /etc/systemd/system.conf.d/silverblue-watchdog.conf \
-        /mnt/etc/systemd/system.conf.d/silverblue-watchdog.conf
-    arch-chroot /mnt systemctl enable silverblue-mark-good.service
+    install -Dm0644 "/etc/systemd/system.conf.d/${UNIT_PREFIX}-watchdog.conf" \
+        "/mnt/etc/systemd/system.conf.d/${UNIT_PREFIX}-watchdog.conf"
+    arch-chroot /mnt systemctl enable "${UNIT_PREFIX}-mark-good.service"
 
     # --- Local repo + marker v1; configure pacman for the update test --------------------
     cp -a /opt/silverblue /mnt/opt/silverblue

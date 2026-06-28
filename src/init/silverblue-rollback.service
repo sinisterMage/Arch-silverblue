@@ -1,5 +1,5 @@
 [Unit]
-Description=Roll back to the previous Silverblue root and reboot
+Description=Roll back to the previous Arch Silverblue root and reboot
 Documentation=https://github.com/ofekb/arch-silverblue
 DefaultDependencies=no
 Conflicts=reboot.target

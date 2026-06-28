@@ -1,5 +1,5 @@
 [Unit]
-Description=Mark the current Silverblue root good (or trigger rollback)
+Description=Mark the current Arch Silverblue root good (or trigger rollback)
 Documentation=https://github.com/ofekb/arch-silverblue
 # Run late, once the system is essentially up, so the health check is meaningful.
 After=multi-user.target
