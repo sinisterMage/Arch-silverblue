@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(bash tests/qemu/run.sh)",
-      "Bash(echo \"TEST6_EXIT=$?\")",
-      "Bash(sed -n '/QEMU TEST SUMMARY/,/====/p' /tmp/test-qemu6.log)"
-    ]
-  }
-}
