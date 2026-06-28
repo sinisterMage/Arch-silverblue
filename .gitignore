@@ -1,0 +1,8 @@
+# Build artifacts
+/iso/output/
+/iso/output/.built
+# QEMU test scratch (disk image, firmware vars, serial logs)
+/tests/qemu/work/
+# Python bytecode
+__pycache__/
+*.pyc
