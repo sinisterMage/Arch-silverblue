@@ -8,13 +8,26 @@ that keep the code testable and easy to rebrand.
 
 ## Prerequisites
 
-The dev host needs only **Docker** and **QEMU**. `shellcheck` and `bats` are pulled on demand via
-`nix shell`, so no Arch tooling is required on the host (Arch tooling runs inside the build
-container and the QEMU guest). `systemd-analyze` (present on most Linux hosts) is used by
-`verify-units`.
+You never need Arch-specific tooling on your host — `pacman`, `archiso`/`mkarchiso`, etc. run
+inside the build container and the QEMU guest. What you actually install depends on which targets
+you run:
 
-- For the fast inner loop: [Nix](https://nixos.org/download) (for `shellcheck`/`bats`).
-- For ISO builds and the integration test: `docker` + `qemu-system-x86_64` + `qemu-img`.
+- **`make test`** (the fast inner loop): `shellcheck` and `bats` (for lint + unit tests), plus
+  `systemd-analyze`, which is already present on most systemd Linux hosts and is used by
+  `verify-units`.
+  - **Nix is not required** — it's just a convenience. By default the `Makefile` fetches
+    `shellcheck`/`bats` on demand via `nix shell nixpkgs#shellcheck nixpkgs#bats`, so you can
+    install nothing and let [Nix](https://nixos.org/download) handle them. But you can equally
+    **install `shellcheck` and `bats` yourself** (your distro's package manager, `brew`, etc.).
+    Once they're on your `PATH`, run the targets with an empty `NIXRUN` so they're used directly:
+    `make test NIXRUN=` (likewise `make lint NIXRUN=` / `make test-unit NIXRUN=`). You can also
+    just invoke the tools straight: `shellcheck -x …`, `bats tests/unit` (or `tests/unit/run.sh`,
+    which already uses `bats` from `PATH`).
+- **`make build-iso`**: `docker` (the build runs `--privileged`) and network access.
+- **`make test-qemu`**: `qemu-system-x86_64` + `qemu-img` (and OVMF firmware).
+
+In short: the unit tests need only `shellcheck` + `bats` (via Nix *or* installed yourself); the
+full pipeline (`make ci`) additionally needs **Docker** and **QEMU**.
 
 ## Dev loop
 
