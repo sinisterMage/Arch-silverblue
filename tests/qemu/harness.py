@@ -10,8 +10,8 @@ against one persistent virtual disk:
                 cycle (hermetic by default); reboot; assert the new root booted and was
                 marked good.
   3. rollback — boot the disk; run an update with a single boot-counting try, corrupt the
-                new root's kernel on the ESP, reboot; assert the system fell back to the
-                previous (good) root.
+                new root's kernel (on the ESP for systemd-boot, inside the subvolume for GRUB),
+                reboot; assert the system fell back to the previous (good) root.
 
 Each scenario prints PASS/FAIL; the process exits 0 only if all pass (CI-friendly).
 Only the Python standard library is used.
@@ -308,7 +308,18 @@ def phase_rollback():
         if bad_snap == good:
             raise ConsoleError("update did not create a distinct snapshot")
         print("[rollback] bad update staged as %s; corrupting its kernel" % bad_snap)
-        sh(con, "truncate -s 0 /efi/silverblue/%s/vmlinuz-linux; sync" % bad_snap)
+        if BOOTLOADER == "grub":
+            # GRUB loads the kernel from inside the snapshot's Btrfs subvolume (it reads Btrfs
+            # natively), not from a per-snapshot copy on the ESP. Reach it via the Btrfs
+            # top-level (subvolid=5) and zero it there.
+            sh(con,
+               "d=$(findmnt -no SOURCE / | sed 's/\\[.*//'); "
+               "mkdir -p /mnt/sbtop && mount -o subvolid=5 \"$d\" /mnt/sbtop && "
+               "truncate -s 0 /mnt/sbtop/%s/boot/vmlinuz-linux && sync && umount /mnt/sbtop"
+               % bad_snap)
+        else:
+            # systemd-boot only reads FAT, so each snapshot's kernel is copied onto the ESP.
+            sh(con, "truncate -s 0 /efi/silverblue/%s/vmlinuz-linux; sync" % bad_snap)
 
         con.send("systemctl reboot")
         # systemd-boot tries the corrupt entry (tries=1 -> 0), fails, and falls back. wait_login

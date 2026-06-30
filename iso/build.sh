@@ -36,7 +36,7 @@ render() {
         -e "s|silverblue-mark-good|$(esc "$UNIT_PREFIX")-mark-good|g" \
         -e "s|silverblue-rollback|$(esc "$UNIT_PREFIX")-rollback|g" \
         -e "s|silverblue-watchdog|$(esc "$UNIT_PREFIX")-watchdog|g" \
-        -e "s|https://github.com/ofekb/arch-silverblue|$(esc "$DISTRO_HOME_URL")|g" \
+        -e "s|https://github.com/sinisterMage/Arch-silverblue|$(esc "$DISTRO_HOME_URL")|g" \
         -e "s|Arch Silverblue|$(esc "$DISTRO_NAME")|g"
 }
 
@@ -175,8 +175,13 @@ main() {
     log "Running mkarchiso (this downloads packages; needs network + --privileged)"
     mkarchiso -v -w "$WORK" -o "$OUT" "$PROFILE"
 
+    # Publish checksums alongside the ISO(s) so downloads can be verified
+    # (`sha256sum -c SHA256SUMS`). Names are stored relative to $OUT.
+    log "Generating SHA256SUMS"
+    ( cd "$OUT" && sha256sum ./*.iso > SHA256SUMS )
+
     log "Done. ISO(s):"
-    ls -lh "$OUT"/*.iso
+    ls -lh "$OUT"/*.iso "$OUT"/SHA256SUMS
 }
 
 main "$@"

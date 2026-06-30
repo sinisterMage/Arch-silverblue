@@ -1,6 +1,6 @@
 [Unit]
 Description=Mark the current Arch Silverblue root good (or trigger rollback)
-Documentation=https://github.com/ofekb/arch-silverblue
+Documentation=https://github.com/sinisterMage/Arch-silverblue
 # Run late, once the system is essentially up, so the health check is meaningful.
 After=multi-user.target
 # If the health check fails (or this unit times out), revert to the previous snapshot.

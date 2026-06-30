@@ -129,8 +129,8 @@ silverblue-update --rollback                                                    
 
 ## Design notes & limitations
 
-- **systemd-boot is the primary, integration-tested path**; GRUB is fully implemented and
-  covered by unit tests but not driven through a full QEMU boot.
+- **systemd-boot is the primary, CI-validated path.** GRUB is fully implemented, covered by unit
+  tests, and the QEMU harness can now drive it end-to-end (`tests/qemu/run.sh --bootloader grub`).
 - **GRUB cannot write Btrfs**, so `grubenv` is kept on the FAT ESP (`/efi/grub/grubenv`). This
   avoids patching GRUB and keeps everything within stock Arch packages.
 - **Boot counting cannot reboot a hang by itself** — `RuntimeWatchdogSec` (a hardware watchdog)

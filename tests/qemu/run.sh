@@ -25,8 +25,8 @@ Usage: tests/qemu/run.sh [--net] [--bootloader systemd-boot|grub]
 
   --net          Update cycle does a real `pacman -Syu` over QEMU user-net (default: a
                  hermetic offline upgrade against the ISO's synthetic local repo).
-  --bootloader   Bootloader to install on the target (default: systemd-boot; the integration
-                 test is validated against systemd-boot).
+  --bootloader   Bootloader to install on the target and drive through the full
+                 install/update/rollback cycle: systemd-boot | grub (default: systemd-boot).
   -h, --help     Show this help.
 
 Environment overrides: SB_OVMF_CODE, SB_OVMF_VARS (firmware), SB_DISK_SIZE.

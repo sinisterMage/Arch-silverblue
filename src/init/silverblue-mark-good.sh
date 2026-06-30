@@ -9,8 +9,9 @@
 #
 # It reuses the update engine's logic by sourcing it (the engine only defines functions when
 # sourced), so bootloader detection / marking / pruning live in exactly one place.
-
-set -uo pipefail
+#
+# Like the engine, this file is sourceable: it only runs mark_good_main (and enables strict mode)
+# when executed directly, so the unit tests can source it and call health_check in isolation.
 
 find_engine() {
     local self d
@@ -97,4 +98,7 @@ mark_good_main() {
     marker "SILVERBLUE-MARKGOOD-OK current=${CURRENT_SUBVOL:-unknown}"
 }
 
-mark_good_main "$@"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    set -uo pipefail
+    mark_good_main "$@"
+fi

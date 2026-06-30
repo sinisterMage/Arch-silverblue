@@ -1,6 +1,6 @@
 [Unit]
 Description=Roll back to the previous Arch Silverblue root and reboot
-Documentation=https://github.com/ofekb/arch-silverblue
+Documentation=https://github.com/sinisterMage/Arch-silverblue
 DefaultDependencies=no
 Conflicts=reboot.target
 After=silverblue-mark-good.service
