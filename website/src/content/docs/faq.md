@@ -47,16 +47,20 @@ neighbors. At most three are kept, pruned automatically. The ESP needs to be
 
 ## Can I install it on real hardware today?
 
-Not comfortably. There is no end-user installer — the bundled autoinstaller is
-a QEMU-gated test appliance. Advanced users can replicate the
-[on-disk layout](/architecture/update-flow/#on-disk-layout) manually, but the
-project currently targets development and testing in VMs. See
-[Getting Started](/getting-started/).
+Yes. The ISO ships `silverblue-install`, a **minimal plain-prompt installer**:
+disk selection (type `ERASE` to confirm), hostname/timezone/locale/keymap,
+bootloader choice, CPU microcode and `linux-firmware`, an optional network
+stack (`systemd-networkd` or NetworkManager), a root password, and an optional
+sudo-capable admin user. UEFI only, no disk encryption, no GUI — see
+[Install on Real Hardware](/guides/installing/). The project is still young;
+expect rough edges.
 
 ## Where do I download an ISO?
 
-There are no releases yet. ISOs are built locally with `make build-iso` or
-produced as CI artifacts on pushes to `main`.
+From [GitHub Releases](https://github.com/sinisterMage/Arch-silverblue/releases/latest)
+(published on version tags, with `SHA256SUMS` for verification — run
+`sha256sum -c SHA256SUMS`). ISOs are also built locally with `make build-iso`
+or produced as CI artifacts on pushes to `main`.
 
 ## Which bootloaders are supported?
 
@@ -75,8 +79,8 @@ not implemented.
 
 ## What about Secure Boot?
 
-Out of scope for now, along with OTA/delta updates, custom package signing,
-PXE, and any immutable-root enforcement.
+Out of scope for now, along with LUKS/disk encryption, swap setup, OTA/delta
+updates, custom package signing, PXE, and any immutable-root enforcement.
 
 ## How is this different from snapper or Timeshift with grub-btrfs?
 

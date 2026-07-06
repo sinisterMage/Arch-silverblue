@@ -13,6 +13,19 @@ against one persistent virtual disk:
                 new root's kernel (on the ESP for systemd-boot, inside the subvolume for GRUB),
                 reboot; assert the system fell back to the previous (good) root.
 
+With SB_INTERACTIVE=1 (run.sh --interactive) it instead drives the interactive installer
+over the serial console — answering its prompts via the SILVERBLUE-INSTALL-PROMPT markers
+(SB_INSTALL_MARKERS=1; the prompt ORDER is a contract with gather_answers() in
+src/installer/silverblue-install) — then boots the installed system, logs in with the
+password it set, and verifies the result:
+
+  1. interactive-install — boot the ISO, run silverblue-install, answer every prompt,
+                confirm with ERASE, wait for SILVERBLUE-INSTALL-OK, decline the reboot.
+  2. interactive-boot    — boot the disk, log in as root at the serial getty (no autologin
+                on interactive targets), assert the right subvol/hostname/mark-good, the
+                enabled network stack, the admin user + sudoers drop-in, and that no
+                test-only artifacts (autologin drop-in, /opt/silverblue) were installed.
+
 Each scenario prints PASS/FAIL; the process exits 0 only if all pass (CI-friendly).
 Only the Python standard library is used.
 """
@@ -31,7 +44,12 @@ ACCEL = os.environ.get("SB_ACCEL", "tcg")
 CPU = os.environ.get("SB_CPU", "qemu64")
 NET = os.environ.get("SB_NET", "0")
 BOOTLOADER = os.environ.get("SB_BOOTLOADER", "systemd-boot")
+INTERACTIVE = os.environ.get("SB_INTERACTIVE", "0") == "1"
 WORK = os.environ.get("SB_WORK", ".")
+
+# Credentials the interactive scenario feeds the installer (test-only values).
+ROOT_PW = "sbtest-root-pw"
+USER_PW = "sbtest-user-pw"
 
 # TCG is much slower than KVM, so scale timeouts accordingly.
 SLOW = ACCEL != "kvm"
@@ -186,12 +204,18 @@ def wait_login(con, timeout=T_BOOT):
     """Wait until an autologin root shell is accepting commands.
 
     Works regardless of prompt theming/escape codes (grml-zsh on the live ISO, bash on the
-    target) because it matches a sentinel we print, not the prompt. The repeated Enter also
-    advances a systemd-boot menu left up by a failed (corrupt-kernel) boot.
+    target) because it matches a sentinel we print, not the prompt.
+
+    Each probe leads with a bare Enter: at a shell that is a harmless empty line, but at a
+    waiting boot menu it immediately boots the highlighted default entry. This matters for
+    GRUB, where any *printable* keystroke cancels the menu countdown and 'e' (the first
+    letter of our echo probe) would drop into the entry editor; it also advances a
+    systemd-boot menu left up by a failed (corrupt-kernel) boot.
     """
     deadline = time.time() + timeout
     while True:
         marker = _next_marker()
+        con.send("")
         con.send(_emit(marker))
         try:
             con.expect([marker], timeout=8)
@@ -209,6 +233,42 @@ def sh(con, command, timeout=T_CMD):
     con.send("%s; %s" % (command, _emit(marker)))
     _, before = con.expect([marker], timeout)
     return before
+
+
+def answer(con, key, value, timeout=T_CMD):
+    """Wait for the installer's prompt marker for `key`, then send `value`.
+
+    Matches the trailing newline so a key that is a prefix of another
+    (root-password vs root-password-confirm) cannot match the wrong marker.
+    """
+    con.expect([r"SILVERBLUE-INSTALL-PROMPT key=%s[\r\n]" % re.escape(key)], timeout)
+    con.send(value)
+
+
+def login_serial(con, password, host, timeout=T_BOOT):
+    """Log in as root at a serial getty (interactive targets have no autologin).
+
+    Do NOT call wait_login() first: its sentinel probes would be typed into the
+    login: prompt. After the password we reuse the sentinel loop to confirm the
+    shell — early probes may be swallowed while PAM runs, so keep retrying.
+    """
+    con.expect([r"%s login:" % re.escape(host)], timeout)
+    con.send("root")
+    con.expect([r"Password:"], T_CMD)
+    con.send(password)
+    deadline = time.time() + T_CMD
+    while True:
+        marker = _next_marker()
+        con.send("")
+        con.send(_emit(marker))
+        try:
+            con.expect([marker], timeout=8)
+            return
+        except ConsoleError:
+            if con.proc.poll() is not None:
+                raise
+            if time.time() > deadline:
+                raise ConsoleError("%s: timed out waiting for a shell after login" % con.name)
 
 
 def get_subvol(con):
@@ -307,21 +367,41 @@ def phase_rollback():
         bad_snap = run_update(con, tries=1)
         if bad_snap == good:
             raise ConsoleError("update did not create a distinct snapshot")
-        print("[rollback] bad update staged as %s; corrupting its kernel" % bad_snap)
         if BOOTLOADER == "grub":
-            # GRUB loads the kernel from inside the snapshot's Btrfs subvolume (it reads Btrfs
-            # natively), not from a per-snapshot copy on the ESP. Reach it via the Btrfs
-            # top-level (subvolid=5) and zero it there.
+            # An unloadable kernel is systemd-boot's scenario (boot counting recovers it);
+            # stock GRUB cannot recover that unattended — after a failed automatic boot it
+            # waits at "Press any key" / the menu (see grub-helpers.sh). Instead exercise
+            # the rollback mechanism GRUB does automate end-to-end: force the staged
+            # root's health check to fail, so mark-good's OnFailure handler arms the
+            # previous root and reboots into it.
+            delay = 180 if SLOW else 45
+            print("[rollback] bad update staged as %s; forcing its health check to fail" % bad_snap)
             sh(con,
                "d=$(findmnt -no SOURCE / | sed 's/\\[.*//'); "
                "mkdir -p /mnt/sbtop && mount -o subvolid=5 \"$d\" /mnt/sbtop && "
-               "truncate -s 0 /mnt/sbtop/%s/boot/vmlinuz-linux && sync && umount /mnt/sbtop"
-               % bad_snap)
+               "mkdir -p /mnt/sbtop/%s/etc/systemd/system/silverblue-mark-good.service.d && "
+               "printf '[Service]\\nEnvironment=\"SB_HEALTHCHECK_CMD=sleep %d; exit 1\"\\n' "
+               "> /mnt/sbtop/%s/etc/systemd/system/silverblue-mark-good.service.d/99-fail-health.conf && "
+               "sync && umount /mnt/sbtop"
+               % (bad_snap, delay, bad_snap))
         else:
             # systemd-boot only reads FAT, so each snapshot's kernel is copied onto the ESP.
+            print("[rollback] bad update staged as %s; corrupting its kernel" % bad_snap)
             sh(con, "truncate -s 0 /efi/silverblue/%s/vmlinuz-linux; sync" % bad_snap)
 
         con.send("systemctl reboot")
+        if BOOTLOADER == "grub":
+            # The staged root boots normally and fails its health check `delay`s later.
+            # Confirm the staged boot actually happened, then wait passively for the
+            # rollback reboot's autologin banner — keystrokes at the GRUB menu would boot
+            # an entry interactively and derail the automatic flow.
+            con.expect([r"login: root \(automatic login\)"], timeout=T_BOOT)
+            wait_login(con)
+            staged = get_subvol(con)
+            if staged != bad_snap:
+                raise ConsoleError("expected staged boot of %s, got %s" % (bad_snap, staged))
+            print("[rollback] staged root %s booted; awaiting health failure + auto-rollback" % staged)
+            con.expect([r"login: root \(automatic login\)"], timeout=T_BOOT * 2)
         # systemd-boot tries the corrupt entry (tries=1 -> 0), fails, and falls back. wait_login
         # sends Enter each iteration, advancing any paused boot menu to the fallback entry.
         wait_login(con, timeout=T_BOOT * 2)
@@ -339,8 +419,107 @@ def phase_rollback():
         con.close()
 
 
+def phase_interactive_install():
+    con = Console("interactive-install", ["-cdrom", ISO])
+    try:
+        wait_login(con, timeout=T_BOOT)
+        # ANSWER ORDER IS A CONTRACT with gather_answers() in src/installer/silverblue-install.
+        con.send("SB_INSTALL_MARKERS=1 silverblue-install")
+        answer(con, "disk", "1")                # the only candidate: the virtio test disk
+        answer(con, "hostname", "sbtest")
+        answer(con, "timezone", "")             # accept the distro.conf defaults
+        answer(con, "locale", "")
+        answer(con, "keymap", "")
+        answer(con, "bootloader", "2" if BOOTLOADER == "grub" else "1")
+        answer(con, "microcode", "n")           # keep the test target lean
+        answer(con, "firmware", "n")
+        answer(con, "network", "2")             # systemd-networkd
+        answer(con, "root-password", ROOT_PW)
+        answer(con, "root-password-confirm", ROOT_PW)
+        answer(con, "username", "tester")
+        answer(con, "user-password", USER_PW)
+        answer(con, "user-password-confirm", USER_PW)
+        answer(con, "confirm", "ERASE")
+        idx, _ = con.expect(
+            [r"SILVERBLUE-INSTALL-OK snap=(root-\S+)", r"SILVERBLUE-INSTALL-FAIL"],
+            timeout=T_INSTALL,
+        )
+        if idx != 0:
+            raise ConsoleError("interactive install failed")
+        with con.lock:
+            text = con.buf
+        snap = re.search(r"SILVERBLUE-INSTALL-OK snap=(root-\S+)", text).group(1)
+        answer(con, "reboot", "n")
+        sh(con, "sync")
+        con.send("poweroff -f")
+        con.wait_exit(timeout=120)
+        return snap
+    finally:
+        con.close()
+
+
+def phase_interactive_boot(snap):
+    con = Console("interactive-boot", [])
+    try:
+        login_serial(con, ROOT_PW, host="sbtest")
+        booted = get_subvol(con)
+        if booted != snap:
+            raise ConsoleError("expected to boot %s, booted %s" % (snap, booted))
+        out = sh(con, "cat /etc/hostname")
+        if "sbtest" not in out:
+            raise ConsoleError("unexpected hostname:\n%s" % out)
+        assert_markgood(con)
+        print("\n[interactive-boot] %s booted and marked good" % booted)
+
+        out = sh(con, "systemctl is-enabled systemd-networkd.service")
+        if "enabled" not in out:
+            raise ConsoleError("systemd-networkd is not enabled:\n%s" % out)
+        out = sh(con, "id -nG tester")
+        if "wheel" not in out:
+            raise ConsoleError("user tester missing or not in wheel:\n%s" % out)
+        out = sh(con, "test -f /etc/sudoers.d/10-wheel && echo SUDOERS-PRESENT")
+        if "SUDOERS-PRESENT" not in out:
+            raise ConsoleError("sudoers drop-in missing:\n%s" % out)
+
+        # Test-only artifacts of the unattended appliance must NOT exist here.
+        out = sh(con, "test ! -e /etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf"
+                      " && echo NO-AUTOLOGIN")
+        if "NO-AUTOLOGIN" not in out:
+            raise ConsoleError("autologin drop-in leaked onto an interactive target")
+        out = sh(con, "test ! -d /opt/silverblue && echo NO-TESTREPO")
+        if "NO-TESTREPO" not in out:
+            raise ConsoleError("local test repo leaked onto an interactive target")
+        print("[interactive-boot] user/network/no-test-artifacts checks passed")
+
+        # Diagnostic only: GRUB installs rely on mkinitcpio's `microcode` hook embedding
+        # ucode into the initramfs (systemd-boot lists *-ucode.img explicitly).
+        out = sh(con, "grep ^HOOKS /etc/mkinitcpio.conf")
+        print("[interactive-boot] target mkinitcpio %s" % out.strip().splitlines()[-1]
+              if out.strip() else "[interactive-boot] no HOOKS line found")
+
+        con.send("poweroff")
+        con.wait_exit(timeout=120)
+        return True
+    finally:
+        con.close()
+
+
 def main():
     results = []
+    if INTERACTIVE:
+        try:
+            snap = phase_interactive_install()
+            results.append(("interactive-install", True, "installed %s" % snap))
+        except ConsoleError as e:
+            results.append(("interactive-install", False, str(e)))
+            return report(results)
+        try:
+            phase_interactive_boot(snap)
+            results.append(("interactive-boot", True, "ok"))
+        except ConsoleError as e:
+            results.append(("interactive-boot", False, str(e)))
+        return report(results)
+
     try:
         snap = phase_install()
         results.append(("install", True, "installed %s" % snap))

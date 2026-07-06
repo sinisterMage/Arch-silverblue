@@ -52,6 +52,15 @@ teardown() { rm -rf "$TMP"; }
     [[ "$output" == *"search --no-floppy --fs-uuid --set=root UUID1"* ]]
 }
 
+@test "grub_render_header arms recordfail with a finite timeout" {
+    run grub_render_header 5
+    # recordfail must never hold the menu forever — an unattended machine has to keep
+    # booting the default (the staged root, or saved_entry after a failed try).
+    [[ "$output" != *"timeout=-1"* ]]
+    [[ "$output" == *"set recordfail=1"* ]]
+    [[ "$output" == *'set default="${next_entry}"'* ]]
+}
+
 @test "grub_set_next writes next_entry via the grub-editenv shim" {
     export SB_MOCK_LOG="$TMP/mock.log"
     GRUB_EDITENV="$SB_REPO/tests/unit/mocks/grub-editenv"

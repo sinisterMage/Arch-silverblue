@@ -35,6 +35,14 @@ const MANIFEST = [
 			'On-disk layout, the seven-step atomic update flow, and the three mechanisms that make auto-rollback actually trigger.',
 	},
 	{
+		source: 'docs/installing.md',
+		dest: 'guides/installing.md',
+		route: '/guides/installing/',
+		title: 'Install on Real Hardware',
+		description:
+			'Download the ISO, boot it in UEFI mode, and run the minimal plain-prompt installer.',
+	},
+	{
 		source: 'DERIVING.md',
 		dest: 'guides/deriving.md',
 		route: '/guides/deriving/',

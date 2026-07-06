@@ -36,6 +36,7 @@ full pipeline (`make ci`) additionally needs **Docker** and **QEMU**.
 | `make test` | `lint` + `test-unit` + `verify-units` — the fast inner loop | nix, systemd-analyze |
 | `make build-iso` | Build the bootable ISO via Docker (also writes `iso/output/SHA256SUMS`) | docker (`--privileged`) + network |
 | `make test-qemu` | Boot the ISO in QEMU; run the happy-path + rollback tests | qemu (KVM or TCG) |
+| `make test-qemu-interactive` | Drive the interactive installer in QEMU; boot + verify the result | qemu (KVM or TCG) |
 | `make ci` | `test` + `build-iso` + `test-qemu` (full pipeline) | all of the above |
 
 Run **`make test` before every change** — it is fast and needs no docker/qemu.
@@ -48,6 +49,7 @@ nix shell nixpkgs#bats --command bats tests/unit/test_rollback.bats   # one file
 bash tests/qemu/run.sh                                     # integration (systemd-boot, default)
 bash tests/qemu/run.sh --bootloader grub                  # integration against GRUB
 bash tests/qemu/run.sh --net                              # update cycle over real pacman -Syu
+bash tests/qemu/run.sh --interactive                      # interactive installer end-to-end
 ```
 
 ## Conventions
@@ -66,8 +68,12 @@ These are load-bearing — please follow them:
   reads config from `SB_*` env vars, so tests can mock them. Prefer adding **pure, unit-testable
   functions** over inlining effectful logic.
 - **`SILVERBLUE-*` markers are a contract.** The uppercase progress markers (e.g.
-  `SILVERBLUE-MARKGOOD-OK`, `SILVERBLUE-ROLLBACK-ARMED`) are grepped literally by the QEMU
-  harness, and the build's `render()` deliberately leaves them untouched. Don't rename them.
+  `SILVERBLUE-MARKGOOD-OK`, `SILVERBLUE-ROLLBACK-ARMED`, `SILVERBLUE-INSTALL-PROMPT`) are
+  grepped literally by the QEMU harness, and the build's `render()` deliberately leaves them
+  untouched. Don't rename them. The interactive installer's **prompt order** is part of the
+  same contract: `phase_interactive_install()` in `tests/qemu/harness.py` answers the prompts
+  in the order `gather_answers()` (in `src/installer/silverblue-install`) asks them — change
+  one and you must change the other.
 - **Keep `src/` generic.** The source tree keeps the upstream `silverblue` names; all
   rebranding happens at build/install time from `config/distro.conf` (see DERIVING.md). Don't
   hardcode brand-specific strings into `src/`.
@@ -75,9 +81,10 @@ These are load-bearing — please follow them:
 ## CI
 
 Every push and pull request runs `make test`. Pushes to `main` and tags also build the ISO and
-upload it with its `SHA256SUMS`. The QEMU integration job is manual (`workflow_dispatch`) because
-GitHub runners have no KVM and the TCG fallback is slow. See
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+upload it with its `SHA256SUMS`; pushing a `v*` tag additionally publishes them to a **GitHub
+Release**. The QEMU integration job is manual (`workflow_dispatch`, with a scenario picker for
+the unattended and/or interactive suites) because GitHub runners have no KVM and the TCG
+fallback is slow. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ## Pull requests
 

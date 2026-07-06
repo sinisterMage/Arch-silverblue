@@ -21,9 +21,13 @@ report we want.
   `iso/airootfs/usr/local/bin/silverblue-autoinstall.sh` targets `/dev/vda`, wipes it
   unconditionally, and provisions a **passwordless root** with serial-console autologin. It is
   gated behind a QEMU `fw_cfg` blob (`ConditionPathExists=…/opt/silverblue/scenario/raw`), so it
-  never runs on a normal/interactive boot or on real hardware. Producing a hardened, interactive
-  installer (disk selection, user accounts, network, microcode) is out of scope for the current
-  image.
+  never runs on a normal/interactive boot or on real hardware.
+- **The interactive installer (`silverblue-install`) is separate from the test appliance.**
+  It only runs when the user invokes it, requires typing `ERASE` before any destructive step,
+  requires a root password (no passwordless accounts on interactive targets), and never
+  installs the test-only artifacts (no autologin drop-in, no `[silverblue-local]` repo). It is
+  still a *minimal* installer: no LUKS, no Secure Boot — see
+  [docs/installing.md](docs/installing.md) for its scope.
 - **The offline test repo trusts unsigned packages.** The synthetic `[silverblue-local]` repo
   baked into the ISO for the hermetic update test uses `SigLevel = Optional TrustAll`. Derivatives
   that ship their own repositories should **sign them** and avoid `TrustAll` (see

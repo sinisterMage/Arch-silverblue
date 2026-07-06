@@ -10,7 +10,7 @@ Silverblue gets it from Btrfs copy-on-write snapshots alone.
 
 | Project | Update mechanism | Running root writable? | Atomic updates | Automatic health-check rollback | Maturity |
 | --- | --- | --- | --- | --- | --- |
-| **Arch Silverblue** | `pacman -Syu` inside a Btrfs snapshot clone | **Yes** — plain Arch | Yes | **Yes** — health check + watchdog + boot counting | Experimental, pre-release |
+| **Arch Silverblue** | `pacman -Syu` inside a Btrfs snapshot clone | **Yes** — plain Arch | Yes | **Yes** — health check + watchdog + boot counting | Experimental |
 | Fedora Silverblue / Atomic Desktops | rpm-ostree image deployments | No (read-only `/usr`; package layering) | Yes | No by default — previous deployment selectable at boot | Mature |
 | openSUSE MicroOS / Aeon | `transactional-update` into a new Btrfs snapshot | No (read-only root) | Yes | Optional, via `health-checker` | Mature |
 | NixOS | Declarative rebuild producing a new generation | Mostly (`/nix/store` is read-only; system is config-defined) | Yes | No by default — previous generation selectable at boot | Mature |
@@ -56,5 +56,7 @@ evolve. Corrections are welcome via
 :::
 
 Also worth honest emphasis: every other project in this table is **far more
-mature**. Arch Silverblue is experimental and pre-release — see the
-[FAQ](/faq/) and [Getting Started](/getting-started/) for what works today.
+mature**. Arch Silverblue is experimental — releases exist and it installs on
+real hardware, but expect rough edges. See the [FAQ](/faq/),
+[Getting Started](/getting-started/), and
+[Install on Real Hardware](/guides/installing/) for what works today.

@@ -58,7 +58,7 @@ stock Arch Silverblue. Variables, grouped:
 
 | Variable | Purpose | Required for a rename? |
 | --- | --- | --- |
-| `BIN_PREFIX` | the CLI becomes `${BIN_PREFIX}-update` (`/usr/bin/silverblue-update` by default) | yes |
+| `BIN_PREFIX` | the CLIs become `${BIN_PREFIX}-update` and `${BIN_PREFIX}-install` (`/usr/bin/silverblue-update` / `-install` by default) | yes |
 | `UNIT_PREFIX` | the units become `${UNIT_PREFIX}-mark-good.service` / `-rollback.service` / `-rollback.target` | yes |
 | `LIB_DIR` | helper/library dir (`/usr/lib/silverblue`) | yes |
 | `ESP_SUBDIR` | per-snapshot kernel dir on the ESP (`/efi/silverblue/<snap>`, systemd-boot) | cosmetic |
@@ -75,6 +75,9 @@ stock Arch Silverblue. Variables, grouped:
 | `TIMEZONE` | zoneinfo path (e.g. `Europe/Amsterdam`) |
 | `LOCALE` | `locale.gen` entry + `/etc/locale.conf` `LANG` |
 | `KEYMAP` | vconsole keymap (`""` = leave default) |
+
+These are what the unattended test install writes verbatim, and what the **interactive
+installer** offers as prompt defaults (`BOOTLOADER` below likewise seeds its bootloader menu).
 
 ### Bootloader / filesystem
 
@@ -99,7 +102,8 @@ stock Arch Silverblue. Variables, grouped:
 
 | You set… | …and it lands in |
 | --- | --- |
-| `BIN_PREFIX` | `/usr/bin/<prefix>-update`; the baked engine defaults; `file_permissions` in the ISO profile |
+| `DISTRO_ID` | the ISO file name (`<id>-YYYY.MM.DD-x86_64.iso`) and the Docker image tag |
+| `BIN_PREFIX` | `/usr/bin/<prefix>-update` and `/usr/bin/<prefix>-install`; the baked engine defaults; `file_permissions` in the ISO profile |
 | `UNIT_PREFIX` | the three unit files + the two `*-mark-good.sh`/`*-rollback.sh` scripts; the enable symlink; the watchdog drop-in |
 | `LIB_DIR` | where the engine finds its helpers/scripts (`SB_LIB_DIR` baked in) |
 | `DISTRO_NAME` | systemd-boot/GRUB entry titles; unit `Description=`; os-release `NAME`/`PRETTY_NAME` |
@@ -107,12 +111,14 @@ stock Arch Silverblue. Variables, grouped:
 | `HOSTNAME` / `TIMEZONE` / `LOCALE` / `KEYMAP` | the installed `/etc/hostname`, `/etc/localtime`, `/etc/locale.conf`, `/etc/vconsole.conf` |
 | `FS_LABEL` / `ESP_LABEL` | the Btrfs/ESP labels and the GPT partition name |
 | `PKGS_ISO` | `packages.x86_64` in the archiso profile |
-| `PKGS_BASE` | the `pacstrap` command in the autoinstaller |
+| `PKGS_BASE` | the `pacstrap` package list of both installers (the interactive one adds the user's microcode/firmware/network/sudo choices on top) |
 | `EXTRA_REPOS` | the target's `/etc/pacman.conf` |
 
 What deliberately stays generic: the whole `src/` tree on disk, the upstream unit tests,
 `tools/verify-units.sh`, the uppercase `SILVERBLUE-*` progress markers (the QEMU harness greps
 them), and the test-only `silverblue-autoinstall.sh` / synthetic `[silverblue-local]` repo.
+The installer library and interactive frontend are installed **verbatim** (they read your
+`distro.conf` at runtime); only the frontend's file *name* is derived from `BIN_PREFIX`.
 
 ## Branding
 
@@ -133,9 +139,10 @@ them), and the test-only `silverblue-autoinstall.sh` / synthetic `[silverblue-lo
     $'[mydistro]\nSigLevel = Optional TrustAll\nServer = https://repo.mydistro.org/$arch'
   )
   ```
-  **Caveat:** `EXTRA_REPOS` is only applied on the **networked** install path (`net=1`). The
-  offline/hermetic test path leaves the target with just the bundled `file://` repo so the
-  self-contained update test still works.
+  **Caveat:** `EXTRA_REPOS` is applied by the **interactive installer** (always networked) and
+  by the unattended test install's networked path (`net=1`). The offline/hermetic test path
+  leaves the target with just the bundled `file://` repo so the self-contained update test
+  still works.
 
 ## Build & verify
 
