@@ -11,6 +11,10 @@ hero:
     - text: Get Started
       link: /getting-started/
       icon: right-arrow
+    - text: Download ISO
+      link: https://github.com/sinisterMage/Arch-silverblue/releases/latest
+      icon: download
+      variant: minimal
     - text: How it works
       link: /architecture/update-flow/
       variant: minimal
@@ -96,9 +100,11 @@ Read the full flow, the on-disk layout, and the rollback-trigger table in
 [Update & Rollback Flow](/architecture/update-flow/).
 
 :::caution[Project status]
-Arch Silverblue is a **young, experimental project**. There are no releases or
-stable ISO downloads yet — ISOs are built locally (`make build-iso`) or as CI
-artifacts. The bundled installer is a test appliance for QEMU only and never
-runs on real hardware. If the approach interests you, star the project on
+Arch Silverblue is a **young, experimental project**. ISOs (with `SHA256SUMS`)
+are published on [GitHub Releases](https://github.com/sinisterMage/Arch-silverblue/releases/latest)
+and include a **minimal plain-prompt installer** for real hardware — see
+[Install on Real Hardware](/guides/installing/). Expect rough edges; treat it
+as something to try, not yet something to rely on. If the approach interests
+you, star the project on
 [GitHub](https://github.com/sinisterMage/Arch-silverblue) and follow along.
 :::

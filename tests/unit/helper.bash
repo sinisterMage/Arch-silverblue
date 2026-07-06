@@ -11,3 +11,8 @@ load_engine() {
     # shellcheck source=/dev/null
     source "$SB_REPO/src/update-engine/silverblue-update"
 }
+
+load_installer_lib() {
+    # shellcheck source=/dev/null
+    source "$SB_REPO/src/installer/install-lib.sh"
+}

@@ -76,6 +76,10 @@ main() {
     log "Overlaying iso/airootfs"
     cp -rT "$REPO/iso/airootfs" "$PROFILE/airootfs"
 
+    # Name the ISO after the distro id (releng defaults to archlinux-*.iso), so releases
+    # and derivatives ship a recognizable file name.
+    sed -i "s|^iso_name=.*|iso_name=\"${DISTRO_ID}\"|" "$PROFILE/profiledef.sh"
+
     # --- Inject the distro tools at their installed paths (renamed/rendered per config) ----
     log "Injecting tools (bin=${BIN_PREFIX}-update lib=${LIB_DIR})"
     local A="$PROFILE/airootfs"
@@ -107,6 +111,12 @@ main() {
     install -Dm0644 "$REPO/src/bootloader/sdboot-helpers.sh" "$A${LIB_DIR}/sdboot-helpers.sh"
     install -Dm0644 "$REPO/src/bootloader/grub-helpers.sh"   "$A${LIB_DIR}/grub-helpers.sh"
 
+    # Installer: shared library + interactive frontend. Both source config/distro.conf at
+    # runtime, so they are installed verbatim — only the frontend's *name* is derived. The
+    # library lives at a fixed, id-independent path both frontends default to.
+    install -Dm0644 "$REPO/src/installer/install-lib.sh" "$A/usr/local/lib/installer/install-lib.sh"
+    install -Dm0755 "$REPO/src/installer/silverblue-install" "$A/usr/bin/${BIN_PREFIX}-install"
+
     # Init scripts + units: renamed by prefix and rendered (paths/branding substituted).
     render < "$REPO/src/init/silverblue-mark-good.sh" > "$A${LIB_DIR}/${UNIT_PREFIX}-mark-good.sh"
     render < "$REPO/src/init/silverblue-rollback.sh"  > "$A${LIB_DIR}/${UNIT_PREFIX}-rollback.sh"
@@ -129,12 +139,17 @@ main() {
     local fp; fp=$(mktemp)
     {
         printf '  ["/usr/bin/%s-update"]="0:0:755"\n'   "$BIN_PREFIX"
+        printf '  ["/usr/bin/%s-install"]="0:0:755"\n'  "$BIN_PREFIX"
         printf '  ["%s/%s-mark-good.sh"]="0:0:755"\n'   "$LIB_DIR" "$UNIT_PREFIX"
         printf '  ["%s/%s-rollback.sh"]="0:0:755"\n'    "$LIB_DIR" "$UNIT_PREFIX"
         printf '  ["/usr/local/bin/silverblue-autoinstall.sh"]="0:0:755"\n'
     } > "$fp"
     sed -i "/^file_permissions=(/r $fp" "$PROFILE/profiledef.sh"
     rm -f "$fp"
+
+    # Live-ISO greeting pointing at the interactive installer (overrides releng's motd).
+    printf 'Welcome to %s live.\n\nTo install to disk, run: %s-install\n\n' \
+        "$DISTRO_NAME" "$BIN_PREFIX" > "$A/etc/motd"
 
     # --- Enable services in the live ISO --------------------------------------------------
     log "Enabling services"

@@ -3,10 +3,11 @@ title: Getting Started
 description: Build the Arch Silverblue ISO, test it in QEMU, and use the atomic update CLI on an installed system.
 ---
 
-Today, Arch Silverblue is something you **build and test**, not something you
-download and install on your laptop. There are no releases yet; the ISO is
-built locally in Docker and exercised in QEMU. This page walks that path, then
-covers the `silverblue-update` CLI you get on an installed system.
+There are two ways in: **install it on real hardware** from a released ISO
+using the minimal interactive installer — see
+[Install on Real Hardware](/guides/installing/) — or **build and test it
+yourself**. This page walks the build-and-test path, then covers the
+`silverblue-update` CLI you get on an installed system.
 
 ## Prerequisites
 
@@ -60,15 +61,18 @@ onto a virtual disk via the test autoinstaller, and then asserts both paths:
 The update cycle is hermetic by default (a synthetic bumped package in an
 offline repo baked into the ISO); pass `--net` to `tests/qemu/run.sh` for a
 real `pacman -Syu` instead, or `--bootloader grub` to drive GRUB.
+`make test-qemu-interactive` runs a third scenario that drives the
+**interactive installer** end-to-end over the serial console and verifies the
+installed system.
 
-:::caution[Real hardware]
-There is **no end-user installer**. The bundled autoinstaller is a test
-appliance: it is gated behind a QEMU `fw_cfg` flag (so it never fires on a
-normal boot) and it **wipes `/dev/vda`** unconditionally. Advanced users can
-replicate the on-disk layout by hand — see the
-[on-disk layout](/architecture/update-flow/#on-disk-layout) — but be aware the
-default package set omits `linux-firmware` (VM-oriented); add it to
-`PKGS_BASE` in `config/distro.conf` for real hardware.
+:::note[Real hardware]
+To install on a physical machine, follow
+[Install on Real Hardware](/guides/installing/) — download a released ISO,
+boot it in UEFI mode, and run `silverblue-install`. The default `PKGS_BASE`
+package set omits `linux-firmware` (VM-oriented), so accept the installer's
+default-on `linux-firmware` prompt on real machines. The *unattended*
+autoinstaller in the ISO remains a QEMU-only test appliance: it is gated
+behind a `fw_cfg` flag and never fires on a normal boot.
 :::
 
 ## Using an installed system

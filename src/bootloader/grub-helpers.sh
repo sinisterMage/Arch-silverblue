@@ -12,7 +12,15 @@
 #
 # Next-boot-without-changing-default uses the one-shot `next_entry`; auto-rollback uses
 # the `recordfail` tripwire: grub.cfg arms it on the one-shot boot and mark-good clears it,
-# so a boot that never marks good leaves `saved_entry` (the old root) as the default.
+# so a boot that never marks good leaves `saved_entry` (the old root) as the default on
+# the next (e.g. watchdog-reset or rollback-service) boot. recordfail keeps a FINITE menu
+# timeout: an unattended machine must keep booting the default, never hold the menu.
+#
+# Known GRUB limitation (unlike systemd-boot's boot counting): a kernel that fails to
+# LOAD leaves GRUB waiting at "Press any key"/the menu — stock GRUB has no unattended
+# in-session fallback (its `fallback` variable only accepts numeric entry indexes and
+# does not chain from an interactive selection). The previous root is one keypress away
+# on the held menu; health-check failures and hangs still roll back automatically.
 
 # Return 0 if GRUB appears to be the active bootloader under $1 (the ESP mount).
 grub_is_active() {
@@ -40,7 +48,7 @@ EOF
 }
 
 # Render the grub.cfg header: load grubenv from the FAT ESP, consume the one-shot
-# `next_entry`, arm `recordfail`, otherwise fall back to the permanent `saved_entry`.
+# `next_entry` (arming `recordfail`), otherwise boot the permanent `saved_entry`.
 grub_render_header() {
     local timeout=${1:-5}
     cat <<EOF
@@ -55,7 +63,7 @@ if [ -n "\${next_entry}" ]; then
     set recordfail=1
     save_env --file \${prefix}/grubenv recordfail
 fi
-if [ "\${recordfail}" = 1 ]; then set timeout=-1; else set timeout=$timeout; fi
+if [ "\${recordfail}" = 1 ]; then set timeout=10; else set timeout=$timeout; fi
 EOF
 }
 

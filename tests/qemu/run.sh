@@ -17,16 +17,19 @@ WORK="$ROOT_DIR/tests/qemu/work"
 
 NET=0
 BOOTLOADER=systemd-boot
+INTERACTIVE=0
 DISK_SIZE=${SB_DISK_SIZE:-12G}
 
 usage() {
     cat <<'EOF'
-Usage: tests/qemu/run.sh [--net] [--bootloader systemd-boot|grub]
+Usage: tests/qemu/run.sh [--net] [--bootloader systemd-boot|grub] [--interactive]
 
   --net          Update cycle does a real `pacman -Syu` over QEMU user-net (default: a
                  hermetic offline upgrade against the ISO's synthetic local repo).
   --bootloader   Bootloader to install on the target and drive through the full
                  install/update/rollback cycle: systemd-boot | grub (default: systemd-boot).
+  --interactive  Drive the interactive installer over the serial console instead of the
+                 unattended autoinstaller, then boot and verify the installed system.
   -h, --help     Show this help.
 
 Environment overrides: SB_OVMF_CODE, SB_OVMF_VARS (firmware), SB_DISK_SIZE.
@@ -37,6 +40,7 @@ while (( $# )); do
     case "$1" in
         --net)         NET=1 ;;
         --bootloader)  BOOTLOADER=${2:?}; shift ;;
+        --interactive) INTERACTIVE=1 ;;
         -h|--help)     usage; exit 0 ;;
         *)             echo "unknown argument: $1 (try --help)" >&2; exit 2 ;;
     esac
@@ -104,7 +108,8 @@ chmod u+w "$WORK/OVMF_VARS.fd"
 export SB_ISO="$ISO" SB_DISK="$DISK"
 export SB_FW_CODE="$FW_CODE" SB_FW_VARS="$WORK/OVMF_VARS.fd"
 export SB_ACCEL="$ACCEL" SB_CPU="$CPU" SB_NET="$NET" SB_BOOTLOADER="$BOOTLOADER"
+export SB_INTERACTIVE="$INTERACTIVE"
 export SB_WORK="$WORK"
 
-echo "==> launching harness (net=$NET bootloader=$BOOTLOADER)"
+echo "==> launching harness (net=$NET bootloader=$BOOTLOADER interactive=$INTERACTIVE)"
 exec python3 "$ROOT_DIR/tests/qemu/harness.py"

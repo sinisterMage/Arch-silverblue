@@ -38,17 +38,20 @@ src/
   update-engine/silverblue-update      # the atomic update CLI (Bash, shellcheck-clean)
   bootloader/sdboot-helpers.sh         # systemd-boot entry/copy/bless/prune helpers
   bootloader/grub-helpers.sh           # GRUB menuentry/grubenv helpers
+  installer/install-lib.sh             # shared install steps (partition/pacstrap/bootloader)
+  installer/silverblue-install         # minimal interactive installer (runs on the live ISO)
   init/silverblue-mark-good.{service,sh}   # post-boot health check + good-marking
   init/silverblue-rollback.{target,service,sh}  # OnFailure rollback
   init/silverblue-watchdog.conf        # RuntimeWatchdogSec drop-in (hang recovery)
 iso/
   Dockerfile                           # reproducible archiso build image
   build.sh                             # assembles the releng profile + overlay, runs mkarchiso
-  airootfs/                            # ISO overlay: autoinstaller, serial autologin, fw_cfg
+  airootfs/                            # ISO overlay: test autoinstaller, serial autologin, fw_cfg
 tests/
   unit/                                # bats tests + command mocks (no root/Btrfs needed)
-  qemu/run.sh, qemu/harness.py         # boot the ISO in QEMU; happy-path + rollback tests
+  qemu/run.sh, qemu/harness.py         # boot the ISO in QEMU; install/update/rollback tests
 docs/update-flow.md                    # documented flow + ASCII diagram
+docs/installing.md                     # end-user install guide (real hardware)
 Makefile                               # lint / test-unit / build-iso / test-qemu
 ```
 
@@ -82,6 +85,16 @@ make test-qemu     # boots the ISO, installs, runs the happy-path + rollback ass
 rollback path (bad update → reverts to previous root) pass. It uses KVM when `/dev/kvm` is
 writable and falls back to TCG (`-cpu qemu64`) otherwise.
 
+## Installing on real hardware
+
+Download the ISO from
+[GitHub Releases](https://github.com/sinisterMage/Arch-silverblue/releases/latest) (published
+automatically on version tags), boot it in UEFI mode, and run **`silverblue-install`** — a
+minimal plain-prompt installer that asks for disk, hostname, timezone/locale/keymap,
+bootloader, CPU microcode, `linux-firmware`, a network stack, a root password, and an optional
+admin user, then requires typing `ERASE` before touching anything. See
+[`docs/installing.md`](docs/installing.md) for the full guide.
+
 ## Usage on an installed system
 
 `silverblue-update` must run as root on a Btrfs root with an ESP at `/efi`.
@@ -114,6 +127,13 @@ default `3`), and the injectable command paths `BTRFS`, `BOOTCTL`, `GRUB_EDITENV
   real `pacman -Syu` over QEMU user-net. The integration test is validated against systemd-boot.
   > The install phase pacstraps a base system, which requires network (QEMU user-net) — this is
   > intrinsic to installing Arch. The *update* assertion is what runs offline.
+- **Interactive-installer test** (`make test-qemu-interactive`) drives `silverblue-install`
+  itself over the serial console: the harness answers every prompt via the
+  `SILVERBLUE-INSTALL-PROMPT` markers, confirms with `ERASE`, then boots the installed system,
+  logs in with the password it set, and asserts the subvolume, hostname, mark-good, network
+  stack, admin user, and that no test-only artifacts (autologin, local test repo) leaked onto
+  the target. The interactive installer and the test autoinstaller share one implementation
+  (`src/installer/install-lib.sh`), so the unattended scenarios also cover the shared steps.
 
 ## Verification checklist
 
@@ -130,7 +150,11 @@ silverblue-update --rollback                                                    
 ## Design notes & limitations
 
 - **systemd-boot is the primary, CI-validated path.** GRUB is fully implemented, covered by unit
-  tests, and the QEMU harness can now drive it end-to-end (`tests/qemu/run.sh --bootloader grub`).
+  tests, and the QEMU harness can drive it end-to-end (`tests/qemu/run.sh --bootloader grub`).
+  One GRUB limitation: a kernel that fails to *load* is not recovered unattended (stock GRUB has
+  no in-session fallback; the held menu offers the previous root one keypress away) — the GRUB
+  rollback test therefore exercises the health-check `OnFailure` path, while the systemd-boot
+  test exercises boot counting with a corrupt kernel.
 - **GRUB cannot write Btrfs**, so `grubenv` is kept on the FAT ESP (`/efi/grub/grubenv`). This
   avoids patching GRUB and keeps everything within stock Arch packages.
 - **Boot counting cannot reboot a hang by itself** — `RuntimeWatchdogSec` (a hardware watchdog)
@@ -143,9 +167,10 @@ silverblue-update --rollback                                                    
 
 ### Out of scope
 
-GUI/TUI, ZFS implementation (documented as future work in `docs/update-flow.md`), OTA/delta
-updates, custom pacman wrappers or signing, PXE, Secure Boot, and any immutable-root
-enforcement.
+Any GUI (a minimal plain-prompt TUI installer *is* included — see
+[`docs/installing.md`](docs/installing.md)), LUKS/disk encryption, swap setup, ZFS
+implementation (documented as future work in `docs/update-flow.md`), OTA/delta updates, custom
+pacman wrappers or signing, PXE, Secure Boot, and any immutable-root enforcement.
 
 ## Contributing
 

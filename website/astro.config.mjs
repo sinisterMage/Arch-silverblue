@@ -41,7 +41,10 @@ export default defineConfig({
 				},
 				{
 					label: 'Guides',
-					items: [{ label: 'Derive Your Own Distro', slug: 'guides/deriving' }],
+					items: [
+						{ label: 'Install on Real Hardware', slug: 'guides/installing' },
+						{ label: 'Derive Your Own Distro', slug: 'guides/deriving' },
+					],
 				},
 				{
 					label: 'Project',

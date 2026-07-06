@@ -15,6 +15,8 @@ SHELL_FILES := \
 	src/bootloader/grub-helpers.sh \
 	src/init/silverblue-mark-good.sh \
 	src/init/silverblue-rollback.sh \
+	src/installer/install-lib.sh \
+	src/installer/silverblue-install \
 	iso/build.sh \
 	iso/airootfs/usr/local/bin/silverblue-autoinstall.sh \
 	tests/qemu/run.sh \
@@ -31,7 +33,7 @@ IMAGE := $(shell bash -c '. config/distro.conf 2>/dev/null && printf "%s-iso" "$
 ISO_STAMP := iso/output/.built
 ISO_INPUTS := iso/Dockerfile iso/build.sh $(shell find iso/airootfs src config -type f 2>/dev/null)
 
-.PHONY: all lint test-unit verify-units build-iso rebuild-iso test-qemu test ci clean help
+.PHONY: all lint test-unit verify-units build-iso rebuild-iso test-qemu test-qemu-interactive test ci clean help
 
 help:
 	@echo "Targets:"
@@ -40,6 +42,7 @@ help:
 	@echo "  verify-units  systemd-analyze verify the Silverblue systemd units"
 	@echo "  build-iso     build the bootable ISO via Docker (needs --privileged + network)"
 	@echo "  test-qemu     boot the ISO in QEMU and run the happy-path + rollback tests"
+	@echo "  test-qemu-interactive  drive the interactive installer in QEMU and boot the result"
 	@echo "  test          lint + test-unit + verify-units (fast inner loop)"
 	@echo "  ci            test + build-iso + test-qemu (full pipeline)"
 	@echo "  clean         remove build/test artifacts"
@@ -74,6 +77,9 @@ rebuild-iso:
 # --- QEMU integration test ----------------------------------------------------------------
 test-qemu: $(ISO_STAMP)
 	bash tests/qemu/run.sh
+
+test-qemu-interactive: $(ISO_STAMP)
+	bash tests/qemu/run.sh --interactive
 
 ci: test build-iso test-qemu
 

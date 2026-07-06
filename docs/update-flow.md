@@ -10,6 +10,9 @@ bootloader falls back to the previous root.
 
 ## On-disk layout
 
+This is the layout both installers create — the interactive `silverblue-install` (see
+[installing.md](installing.md)) and the unattended QEMU test appliance.
+
 ```
 GPT disk (e.g. /dev/vda)
 ├─ p1  ESP  (FAT32, mounted at /efi)        kernels for systemd-boot live here per-snapshot
@@ -116,7 +119,12 @@ complementary mechanisms:
 | New kernel won't load            | systemd-boot boot counting demotes the entry; previous boots |
 
 After any of these reboots, the new entry's tries are exhausted / its one-shot consumed, so the
-previous (good, counter-less) root is selected.
+previous (good, counter-less) root is selected. On GRUB the one-shot boot arms the `recordfail`
+tripwire (cleared by mark-good) and keeps a **finite** menu timeout, so an unattended machine
+always keeps booting rather than holding the menu; the first two failure modes roll back
+automatically on GRUB too. The third does not: a kernel that fails to *load* leaves stock GRUB
+waiting at its menu with the previous root one keypress away — unattended recovery from an
+unloadable kernel is a systemd-boot (boot counting) feature.
 
 ## Manual control
 
