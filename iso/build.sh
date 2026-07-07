@@ -195,6 +195,11 @@ main() {
     log "Generating SHA256SUMS"
     ( cd "$OUT" && sha256sum ./*.iso > SHA256SUMS )
 
+    # The container runs as root, so the artifacts land root-owned on the bind-mounted
+    # checkout; hand them back to the repo owner so host-side steps (the Makefile's stamp
+    # file, `make clean`, CI artifact upload) can manage them without root.
+    chown -R --reference="$REPO" "$OUT"
+
     log "Done. ISO(s):"
     ls -lh "$OUT"/*.iso "$OUT"/SHA256SUMS
 }

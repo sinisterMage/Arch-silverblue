@@ -66,6 +66,7 @@ build-iso: $(ISO_STAMP)
 
 $(ISO_STAMP): $(ISO_INPUTS)
 	docker build -t $(IMAGE) -f iso/Dockerfile .
+	@mkdir -p iso/output
 	docker run --rm --privileged -v "$(CURDIR):/build" $(IMAGE)
 	@touch $(ISO_STAMP)
 	@ls -lh iso/output/*.iso
