@@ -24,7 +24,7 @@ hero:
       variant: minimal
 ---
 
-import { Card, CardGrid, Steps } from '@astrojs/starlight/components';
+import { Card, CardGrid, LinkCard, Steps } from '@astrojs/starlight/components';
 
 ```bash
 silverblue-update            # snapshot the root, upgrade it, validate, boot it next
@@ -98,6 +98,18 @@ silverblue-update --dry-run  # show the plan without changing anything
 
 Read the full flow, the on-disk layout, and the rollback-trigger table in
 [Update & Rollback Flow](/architecture/update-flow/).
+
+## Built on Arch Silverblue
+
+Arch Silverblue is designed to be forked into your own atomic distro by
+editing a single file and rebuilding — see
+[Derive Your Own Distro](/guides/deriving/).
+
+<LinkCard
+	title="SilverDeck"
+	href="https://github.com/sinisterMage/SilverDeck"
+	description="A gaming-console distribution that boots straight into a controller-first, fullscreen console UI — no desktop. Built on Arch Silverblue's atomic update engine, SilverDeck is the reference implementation of how to fork Arch Silverblue."
+/>
 
 :::caution[Project status]
 Arch Silverblue is a **young, experimental project**. ISOs (with `SHA256SUMS`)

@@ -5,6 +5,10 @@ Arch Silverblue is built so you can fork it into your own atomic Arch-based dist
 hunt through the scripts for the string `silverblue`; the build reads everything it needs to
 rebrand from that config.
 
+**Reference implementation:** [SilverDeck](https://github.com/sinisterMage/SilverDeck) — a
+gaming-console distribution built on Arch Silverblue — is a real-world derivative and the
+reference example of this fork-and-own model.
+
 ## How it works (fork-and-own model)
 
 Your derivative is a **full copy of this repository** that you own and maintain. You edit
