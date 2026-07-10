@@ -40,3 +40,16 @@ report we want.
   integrity/availability of the system root, not confidentiality. `/home` (`@home`) is shared
   across snapshots and is deliberately **not** rolled back, so data written there persists across
   a rollback.
+- **Integrity manifests use a machine-local HMAC key — know what that buys.** Each update
+  writes an HMAC-SHA256-signed manifest of the snapshot's `/usr` + `/boot` (and its ESP kernel
+  copies under systemd-boot), stored with the key on the Btrfs toplevel outside every snapshot
+  (see [docs/update-flow.md](docs/update-flow.md)). This **detects**: offline tampering with a
+  non-running snapshot, bit-rot, and accidental modification — including modified, missing, and
+  planted-extra files. It does **not** defend against an attacker who gains root on the running
+  system: they can read `hmac.key` (root-only, 0600) and re-sign whatever they changed. Known
+  scope limits, by design: `/etc` and `/var` are runtime-mutable and not covered; file metadata
+  (modes/ownership) and symlink targets are not recorded; snapshots are never made read-only
+  (every snapshot must remain bootable read-write, so a Btrfs `ro` property would brick the
+  fallback); verification runs before rollbacks and on demand, not at boot, and the default
+  rollback policy is `warn` (proceed loudly) so an unattended failure can never boot-loop —
+  set `VERIFY_ON_ROLLBACK="strict"` if you prefer refusal over availability.

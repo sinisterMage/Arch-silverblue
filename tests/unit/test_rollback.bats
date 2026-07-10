@@ -19,6 +19,8 @@ setup() {
     printf '#!/usr/bin/env bash\nexit 1\n' > "$ENGINE_FAIL"
     chmod +x "$ENGINE_OK" "$ENGINE_FAIL"
 
+    # Pin the backend so the host's real init system can never leak into the dispatch.
+    SB_INIT=systemd
     # shellcheck source=/dev/null
     source "$SB_REPO/src/init/silverblue-rollback.sh"
 }

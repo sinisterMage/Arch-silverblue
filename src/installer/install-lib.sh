@@ -328,7 +328,11 @@ configure_initramfs() {
 }
 
 # Copy the distro tools (already renamed/rendered in the ISO by build.sh) into the target
-# and enable the post-boot health check.
+# and enable the post-boot health check via the target's init system (INIT_SYSTEM from
+# distro.conf: systemd | openrc | dinit). The non-systemd integrations run the boot-check
+# wrapper, which self-manages the timeout and failure->rollback dispatch (no OnFailure=
+# there); the systemd watchdog drop-in has no analog on openrc/dinit, so hang protection
+# on those inits comes from bootloader boot-counting / GRUB recordfail only.
 install_target_tools() {
     local mnt=$1 u
     install -Dm0755 "/usr/bin/${BIN_PREFIX}-update" "$mnt/usr/bin/${BIN_PREFIX}-update"
@@ -337,12 +341,51 @@ install_target_tools() {
     # Ensure the entry-point scripts are executable on the target regardless of source modes.
     chmod 0755 "${mnt}${LIB_DIR}/${UNIT_PREFIX}-mark-good.sh" \
         "${mnt}${LIB_DIR}/${UNIT_PREFIX}-rollback.sh"
-    for u in "${UNIT_PREFIX}-mark-good.service" "${UNIT_PREFIX}-rollback.service" "${UNIT_PREFIX}-rollback.target"; do
-        install -Dm0644 "/usr/lib/systemd/system/$u" "$mnt/usr/lib/systemd/system/$u"
-    done
-    install -Dm0644 "/etc/systemd/system.conf.d/${UNIT_PREFIX}-watchdog.conf" \
-        "$mnt/etc/systemd/system.conf.d/${UNIT_PREFIX}-watchdog.conf"
-    "$ARCH_CHROOT" "$mnt" systemctl enable "${UNIT_PREFIX}-mark-good.service"
+    [[ -f "${mnt}${LIB_DIR}/${UNIT_PREFIX}-boot-check.sh" ]] \
+        && chmod 0755 "${mnt}${LIB_DIR}/${UNIT_PREFIX}-boot-check.sh"
+    case "${INIT_SYSTEM:-systemd}" in
+        systemd)
+            for u in "${UNIT_PREFIX}-mark-good.service" "${UNIT_PREFIX}-rollback.service" "${UNIT_PREFIX}-rollback.target"; do
+                install -Dm0644 "/usr/lib/systemd/system/$u" "$mnt/usr/lib/systemd/system/$u"
+            done
+            install -Dm0644 "/etc/systemd/system.conf.d/${UNIT_PREFIX}-watchdog.conf" \
+                "$mnt/etc/systemd/system.conf.d/${UNIT_PREFIX}-watchdog.conf"
+            "$ARCH_CHROOT" "$mnt" systemctl enable "${UNIT_PREFIX}-mark-good.service"
+            ;;
+        openrc)
+            install -Dm0755 "/usr/local/share/distro/init/openrc/${UNIT_PREFIX}-mark-good" \
+                "$mnt/etc/init.d/${UNIT_PREFIX}-mark-good"
+            "$ARCH_CHROOT" "$mnt" rc-update add "${UNIT_PREFIX}-mark-good" default
+            ;;
+        dinit)
+            install -Dm0644 "/usr/local/share/distro/init/dinit/${UNIT_PREFIX}-mark-good" \
+                "$mnt/etc/dinit.d/${UNIT_PREFIX}-mark-good"
+            # dinitctl enable needs a running dinit; an install chroot has none, so enable by
+            # symlinking into the boot service's waits-for.d directory directly.
+            mkdir -p "$mnt/etc/dinit.d/boot.d"
+            ln -sf "../${UNIT_PREFIX}-mark-good" "$mnt/etc/dinit.d/boot.d/${UNIT_PREFIX}-mark-good"
+            ;;
+        *)
+            err "unknown INIT_SYSTEM: ${INIT_SYSTEM} (want systemd|openrc|dinit)"
+            return 1
+            ;;
+    esac
+}
+
+# Write the initial root's integrity manifest so the very first rollback target is already
+# verifiable. Runs the live-ISO engine (--generate-manifest) against a transient subvolid=5
+# mount of the target pool; must run AFTER the bootloader step so the systemd-boot ESP
+# kernel copies exist and get recorded.
+#   $1 rootpart  $2 snap  $3 bootloader (systemd-boot|grub)
+generate_initial_manifest() {
+    local rootpart=$1 snap=$2 bootloader=$3 rc=0
+    local top=/run/installer-toplevel
+    mkdir -p "$top"
+    mount -o subvolid=5 "$rootpart" "$top"
+    SB_TOPLEVEL_MNT="$top" SB_EFI_DIR=/mnt/efi SB_BOOTLOADER="$bootloader" \
+        "${BIN_PREFIX}-update" --generate-manifest "$snap" || rc=$?
+    umount "$top"
+    return "$rc"
 }
 
 # Append the derivative's extra pacman repos (if any) to the target's pacman.conf.

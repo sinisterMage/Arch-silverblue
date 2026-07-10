@@ -1,0 +1,25 @@
+#!/usr/bin/openrc-run
+# shellcheck shell=sh
+#
+# OpenRC integration for the post-boot health check. Added to the default runlevel by the
+# installer (rc-update add silverblue-mark-good default). Runs after everything else, then
+# detaches silverblue-boot-check.sh, which waits for the boot to settle, health-checks under
+# a timeout, and triggers the rollback script on failure (OpenRC has no OnFailure=).
+#
+# start() returns immediately so a slow health check never blocks the boot, and the detached
+# process is unsupervised on purpose: a oneshot with no pidfile can never show up in
+# `rc-status --crashed` and trip the very check it implements.
+
+# shellcheck disable=SC2034  # consumed by openrc-run
+description="Mark the current Arch Silverblue root good (or trigger rollback)"
+
+depend() {
+    # shellcheck disable=SC2035  # OpenRC dependency syntax, not a file glob
+    after *
+}
+
+start() {
+    ebegin "Scheduling ${RC_SVCNAME} boot health check"
+    nohup /usr/lib/silverblue/silverblue-boot-check.sh >/dev/null 2>&1 &
+    eend 0
+}

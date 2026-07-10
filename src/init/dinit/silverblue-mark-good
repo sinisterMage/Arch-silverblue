@@ -1,0 +1,12 @@
+# dinit integration for the post-boot health check. Installed to /etc/dinit.d/ and enabled
+# by the installer via a symlink in /etc/dinit.d/boot.d/ (dinitctl enable needs a running
+# dinit, which an install chroot does not have). It must NOT declare depends-on = boot:
+# boot pulls this service in through its waits-for.d directory, and depending back on boot
+# would be a dependency cycle.
+#
+# The command self-backgrounds: dinit runs a scripted start to completion before considering
+# the boot service settled, and silverblue-boot-check.sh deliberately sleeps and health-checks
+# for up to ~135s (there is no OnFailure= on dinit; the wrapper dispatches rollback itself).
+type = scripted
+command = /bin/sh -c 'nohup /usr/lib/silverblue/silverblue-boot-check.sh >/dev/null 2>&1 &'
+restart = false

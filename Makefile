@@ -11,10 +11,14 @@ NIXRUN := nix shell nixpkgs\#shellcheck nixpkgs\#bats --command
 # Every shell script that must pass shellcheck.
 SHELL_FILES := \
 	src/update-engine/silverblue-update \
+	src/update-engine/integrity.sh \
 	src/bootloader/sdboot-helpers.sh \
 	src/bootloader/grub-helpers.sh \
 	src/init/silverblue-mark-good.sh \
 	src/init/silverblue-rollback.sh \
+	src/init/init-backends.sh \
+	src/init/silverblue-boot-check.sh \
+	src/init/openrc/silverblue-mark-good \
 	src/installer/install-lib.sh \
 	src/installer/silverblue-install \
 	iso/build.sh \

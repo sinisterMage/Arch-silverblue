@@ -83,6 +83,28 @@ stock Arch Silverblue. Variables, grouped:
 These are what the unattended test install writes verbatim, and what the **interactive
 installer** offers as prompt defaults (`BOOTLOADER` below likewise seeds its bootloader menu).
 
+### Init system
+
+| Variable | Purpose |
+| --- | --- |
+| `INIT_SYSTEM` | init system of the installed target: `systemd` (default), `openrc`, or `dinit` |
+
+Notes for non-systemd derivatives (Artix-style):
+
+- Your `PKGS_BASE` must supply the init system itself (e.g. `openrc`/`openrc-init` or
+  `dinit`, plus your elogind/seatd stack) — the installer only wires up the health check,
+  it does not install an init.
+- The health-check/rollback machinery works natively on all three inits (see
+  `src/init/init-backends.sh` for the per-init health semantics). On OpenRC/dinit the
+  `*-boot-check.sh` wrapper self-manages the 120s timeout and failure→rollback dispatch,
+  since those inits have no `OnFailure=` equivalent.
+- The systemd watchdog drop-in has no OpenRC/dinit analog: hang protection on those inits
+  comes from systemd-boot boot-counting / GRUB `recordfail` only (optionally add a
+  `watchdogd` to your package set).
+- `enable_network_stack` (networkd/NetworkManager enabling) is systemd-only; use network
+  mode `none` and enable your own stack via `PKGS_BASE` + your own hooks.
+- The live ISO always runs systemd regardless of `INIT_SYSTEM` (archiso is systemd-based).
+
 ### Bootloader / filesystem
 
 | Variable | Purpose |
@@ -93,6 +115,13 @@ installer** offers as prompt defaults (`BOOTLOADER` below likewise seeds its boo
 | `EFI_DIR` | ESP mountpoint on the installed system — **advanced; leave at `/efi`** (the autoinstaller's `grub-install`/mount paths assume `/efi`) |
 | `KEEP_SNAPSHOTS` | max snapshots retained by the engine (`SB_KEEP`) |
 | `BOOT_TRIES` | systemd-boot boot-counting tries (`SB_TRIES`) |
+
+### Snapshot integrity
+
+| Variable | Purpose |
+| --- | --- |
+| `MANIFEST_PATHS` | snapshot paths hashed into the HMAC-signed integrity manifest (`SB_MANIFEST_PATHS`; default `/usr /boot` — keep `/etc`/`/var` out, they mutate at runtime) |
+| `VERIFY_ON_ROLLBACK` | what a failed manifest check does to a rollback: `warn` (default, proceed loudly), `strict` (refuse; try older snapshots first), `off` (`SB_VERIFY_ON_ROLLBACK`) |
 
 ### Packages & repos
 
@@ -108,7 +137,8 @@ installer** offers as prompt defaults (`BOOTLOADER` below likewise seeds its boo
 | --- | --- |
 | `DISTRO_ID` | the ISO file name (`<id>-YYYY.MM.DD-x86_64.iso`) and the Docker image tag |
 | `BIN_PREFIX` | `/usr/bin/<prefix>-update` and `/usr/bin/<prefix>-install`; the baked engine defaults; `file_permissions` in the ISO profile |
-| `UNIT_PREFIX` | the three unit files + the two `*-mark-good.sh`/`*-rollback.sh` scripts; the enable symlink; the watchdog drop-in |
+| `UNIT_PREFIX` | the three unit files + the `*-mark-good.sh`/`*-rollback.sh`/`*-boot-check.sh` scripts; the enable symlink; the watchdog drop-in; the OpenRC/dinit service names |
+| `INIT_SYSTEM` | which health-check integration the installer enables on the target (systemd units, an OpenRC init script, or a dinit service) |
 | `LIB_DIR` | where the engine finds its helpers/scripts (`SB_LIB_DIR` baked in) |
 | `DISTRO_NAME` | systemd-boot/GRUB entry titles; unit `Description=`; os-release `NAME`/`PRETTY_NAME` |
 | `DISTRO_*` URLs/ids | `/etc/os-release` (rendered from [`config/os-release.in`](config/os-release.in)) and unit `Documentation=` |

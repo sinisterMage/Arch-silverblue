@@ -30,37 +30,33 @@ _engine=$(find_engine) || { printf 'error: silverblue-update engine not found\n'
 # shellcheck source=/dev/null
 source "$_engine"
 
+# The init-system backends (health semantics, reboot/emergency dispatch) live in their own
+# library so this script works unchanged on systemd, OpenRC and dinit.
+find_init_lib() {
+    local self d
+    self=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    for d in "${SB_LIB_DIR:-}" "$self" /usr/lib/silverblue; do
+        [[ -n "$d" && -f "$d/init-backends.sh" ]] && { printf '%s\n' "$d/init-backends.sh"; return 0; }
+    done
+    return 1
+}
+
+_initlib=$(find_init_lib) || { printf 'error: init-backends.sh not found\n' >&2; exit 1; }
+# shellcheck source=/dev/null
+source "$_initlib"
+
 # Markers go to stdout so they land in the journal (and over the serial console in tests).
 marker() { printf '%s\n' "$*"; }
 
 # Returns 0 if the current boot is healthy. Override the check with SB_HEALTHCHECK_CMD
-# (used by the QEMU rollback test to force a failure deterministically).
+# (used by the QEMU rollback test to force a failure deterministically); otherwise the
+# running init system's backend decides (see init-backends.sh for the per-init semantics).
 health_check() {
     if [[ -n "${SB_HEALTHCHECK_CMD:-}" ]]; then
         bash -c "$SB_HEALTHCHECK_CMD"
         return $?
     fi
-    local state u
-    state=$(systemctl is-system-running 2>/dev/null || true)
-    vlog "system state: ${state:-unknown}"
-    case "$state" in
-        running|starting|initializing)
-            return 0
-            ;;
-        degraded)
-            for u in local-fs.target sysinit.target; do
-                if [[ "$(systemctl is-active "$u" 2>/dev/null || true)" != active ]]; then
-                    err "critical unit not active: $u"
-                    return 1
-                fi
-            done
-            return 0
-            ;;
-        *)
-            err "unexpected system state: ${state:-unknown}"
-            return 1
-            ;;
-    esac
+    init_health_check
 }
 
 mark_good_main() {

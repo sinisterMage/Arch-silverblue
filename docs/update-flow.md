@@ -35,7 +35,7 @@ snapshot's kernel/initramfs out to `/efi/silverblue/<snap>/`. **GRUB can read Bt
 points directly at the subvolume's `/boot`; but GRUB cannot *write* Btrfs, so its writable
 `grubenv` lives on the ESP at `/efi/grub/grubenv`.
 
-## The seven-step update flow
+## The eight-step update flow
 
 ```
                               silverblue-update
@@ -59,19 +59,23 @@ points directly at the subvolume's `/boot`; but GRUB cannot *write* Btrfs, so it
   │        a boot entry    grub:        regenerate grub.cfg menuentry                    │
   │                                   │                                                 │
   │                                   ▼                                                 │
-  │  (5) SET NEXT BOOT      newest entry boots next; permanent default UNCHANGED         │
+  │  (5) MANIFEST           sha256 every file under /usr + /boot (and the ESP kernel     │
+  │        the new root     copies), HMAC-sign it, store it OUTSIDE the snapshot          │
+  │                                   │                                                 │
+  │                                   ▼                                                 │
+  │  (6) SET NEXT BOOT      newest entry boots next; permanent default UNCHANGED         │
   │        (one boot only) systemd-boot: newest version sorts first                     │
   │                        grub:        next_entry one-shot in grubenv                   │
   │                                   │                                                 │
   │                                   ▼                                                 │
-  │  (6) KEEP FALLBACK      previous root stays registered; prune to at most 3 snapshots │
+  │  (7) KEEP FALLBACK      previous root stays registered; prune to at most 3 snapshots │
   │        & prune                    │                                                 │
   └───────────────────────────────────┼─────────────────────────────────────────────────┘
                                       ▼
                                    reboot
                                       │
                                       ▼
-  (7) POST-BOOT  ── silverblue-mark-good.service runs the health check ─────────────────┐
+  (8) POST-BOOT  ── silverblue-mark-good.service runs the health check ─────────────────┐
                                       │                                                  │
                               ┌───────┴────────┐                                         │
                           healthy            unhealthy / timeout / hang                  │
@@ -91,17 +95,23 @@ points directly at the subvolume's `/boot`; but GRUB cannot *write* Btrfs, so it
    trips the engine's `EXIT` trap, which deletes the half-built snapshot — no partial state is
    ever left behind.
 3. **Validate.** Require at least one `vmlinuz-*` and one `initramfs-*.img` under the new
-   `/boot`, and run `systemd-analyze verify` on the critical unit(s) inside the new root.
-   Failure discards the snapshot.
+   `/boot`, and verify the critical service definitions inside the new root
+   (`systemd-analyze verify` on systemd roots, `dinitcheck` on dinit roots). Failure discards
+   the snapshot.
 4. **Register.** Create a new bootloader entry with a human-readable label (e.g.
    `Arch Silverblue 2026-06-28 09:30`). systemd-boot entries carry a `+3` boot-counting suffix.
-5. **Set next boot.** The new entry becomes the *next* boot target without touching the
+5. **Manifest.** Hash every file under the manifest paths (default `/usr` and `/boot` —
+   `/etc` and `/var` are runtime-mutable and excluded by design) plus, on systemd-boot, the
+   snapshot's kernel copies on the ESP. The manifest is authenticated with HMAC-SHA256 under
+   a machine-local key; key and manifests live on the Btrfs toplevel, **outside every
+   snapshot**. Verified before rollbacks and on demand (see *Integrity manifests* below).
+6. **Set next boot.** The new entry becomes the *next* boot target without touching the
    permanent default — for systemd-boot the newest `version` sorts first; for GRUB the one-shot
    `next_entry` is set while `saved_entry` (the old default) is preserved.
-6. **Keep fallback & prune.** The previous root remains a registered fallback entry. At most
-   three snapshots are kept; the oldest are pruned (subvolume + ESP kernels + boot entry,
-   deleted in lockstep).
-7. **Post-boot.** `silverblue-mark-good.service` health-checks the boot. On success it makes
+7. **Keep fallback & prune.** The previous root remains a registered fallback entry. At most
+   three snapshots are kept; the oldest are pruned (subvolume + ESP kernels + boot entry +
+   integrity manifest, deleted in lockstep).
+8. **Post-boot.** `silverblue-mark-good.service` health-checks the boot. On success it makes
    the new root the permanent default (`systemd-bless-boot good` / GRUB `saved_entry`) and
    prunes. On failure, timeout, or hang, the boot is never marked good and the system falls
    back to the previous root.
@@ -126,12 +136,52 @@ automatically on GRUB too. The third does not: a kernel that fails to *load* lea
 waiting at its menu with the previous root one keypress away — unattended recovery from an
 unloadable kernel is a systemd-boot (boot counting) feature.
 
+### Init systems
+
+The health check and rollback dispatch are init-system independent (`init-backends.sh`):
+systemd uses the unit pipeline above (`OnFailure=`, `TimeoutStartSec=`); OpenRC and dinit
+derivatives run the same health check via `*-boot-check.sh`, which self-manages the settle
+delay, the 120s timeout and the failure→rollback hand-off. One caveat: the watchdog row in
+the table above is **systemd-only** — on OpenRC/dinit, hang protection comes from boot
+counting / `recordfail` alone. See [DERIVING.md](../DERIVING.md) for the `INIT_SYSTEM` knob.
+
+## Integrity manifests
+
+Every update (and the initial install) records an HMAC-SHA256-authenticated manifest of the
+new snapshot's OS payload — default `/usr` + `/boot`, plus the snapshot's kernel copies on
+the ESP under systemd-boot. Key (`hmac.key`, root-only) and manifests live on the Btrfs
+toplevel next to the snapshots, outside every snapshot, and a snapshot's manifest is deleted
+with it when pruned.
+
+Verification runs at two points — **never** at boot, and nothing is ever mounted read-only,
+so the mutable model is untouched:
+
+- **Before a rollback.** `SB_VERIFY_ON_ROLLBACK` controls the policy (bake the default via
+  `VERIFY_ON_ROLLBACK` in `config/distro.conf`):
+  - `warn` (default): a mismatch logs `SILVERBLUE-VERIFY-WARN` loudly and proceeds — on the
+    unattended failure path, refusing to roll back would turn one bad update into a boot loop.
+  - `strict`: candidates are tried newest-first and the first one that verifies wins; if none
+    does, the rollback is refused *before* any boot state changes (a snapshot predating
+    manifests is accepted with a note, so pre-feature systems stay recoverable).
+  - `off`: no verification.
+- **On demand**, via the CLI below.
+
+A mismatch on the *running* root is advisory only: a live root is mutable by design, so e.g.
+a manual `pacman -S` legitimately changes `/usr`. After such intentional changes, re-stamp
+the snapshot with `--generate-manifest`.
+
+What this defends against — and what it doesn't — is spelled out in
+[SECURITY.md](../SECURITY.md).
+
 ## Manual control
 
 ```
-silverblue-update              # snapshot → upgrade → validate → register → next boot
-silverblue-update --dry-run    # print the full plan, change nothing
-silverblue-update --rollback   # boot the previous snapshot on next reboot
+silverblue-update                          # snapshot → upgrade → validate → register → manifest → next boot
+silverblue-update --dry-run                # print the full plan, change nothing
+silverblue-update --rollback               # boot the previous snapshot on next reboot (verified first)
+silverblue-update --verify                 # verify every snapshot that is not the running root
+silverblue-update --verify <snap>          # verify one snapshot
+silverblue-update --generate-manifest <snap>   # re-stamp a snapshot after intentional changes
 ```
 
 ## ZFS (future work, not implemented)

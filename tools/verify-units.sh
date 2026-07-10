@@ -18,10 +18,13 @@ trap 'rm -rf "$DEST"' EXIT
 
 # Stage the Silverblue tree at its installed absolute paths.
 install -Dm0755 "$ROOT/src/update-engine/silverblue-update"   "$DEST/usr/bin/silverblue-update"
+install -Dm0644 "$ROOT/src/update-engine/integrity.sh"        "$DEST/usr/lib/silverblue/integrity.sh"
 install -Dm0644 "$ROOT/src/bootloader/sdboot-helpers.sh"      "$DEST/usr/lib/silverblue/sdboot-helpers.sh"
 install -Dm0644 "$ROOT/src/bootloader/grub-helpers.sh"        "$DEST/usr/lib/silverblue/grub-helpers.sh"
 install -Dm0755 "$ROOT/src/init/silverblue-mark-good.sh"      "$DEST/usr/lib/silverblue/silverblue-mark-good.sh"
 install -Dm0755 "$ROOT/src/init/silverblue-rollback.sh"       "$DEST/usr/lib/silverblue/silverblue-rollback.sh"
+install -Dm0644 "$ROOT/src/init/init-backends.sh"             "$DEST/usr/lib/silverblue/init-backends.sh"
+install -Dm0755 "$ROOT/src/init/silverblue-boot-check.sh"     "$DEST/usr/lib/silverblue/silverblue-boot-check.sh"
 for u in silverblue-mark-good.service silverblue-rollback.service silverblue-rollback.target; do
     install -Dm0644 "$ROOT/src/init/$u" "$DEST/usr/lib/systemd/system/$u"
 done

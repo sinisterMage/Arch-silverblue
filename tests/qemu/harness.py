@@ -367,6 +367,42 @@ def phase_rollback():
         bad_snap = run_update(con, tries=1)
         if bad_snap == good:
             raise ConsoleError("update did not create a distinct snapshot")
+
+        # --- Integrity manifests: verify OK, detect tampering, strict rollback refusal ----
+        # Full /usr+/boot hashing runs in the guest, so give these the update timeout.
+        out = sh(con, "silverblue-update --verify %s" % bad_snap, timeout=T_UPDATE)
+        if "SILVERBLUE-VERIFY-OK snap=%s" % bad_snap not in out:
+            raise ConsoleError("fresh snapshot failed integrity verification:\n%s" % out)
+        print("[rollback] integrity manifest of %s verifies OK; tampering snapshots" % bad_snap)
+        # Plant a file under /boot of every non-running snapshot: extra-file detection must
+        # fail them all, so strict-mode rollback has no verifiable candidate left and must
+        # refuse without arming anything. (An implant is trivially reversible with rm and
+        # cannot damage a later boot, unlike modifying a real boot artifact.)
+        sh(con,
+           "d=$(findmnt -no SOURCE / | sed 's/\\[.*//'); "
+           "mkdir -p /mnt/sbtop && mount -o subvolid=5 \"$d\" /mnt/sbtop && "
+           "for s in /mnt/sbtop/root-*; do "
+           "[ \"$(basename \"$s\")\" = \"%s\" ] && continue; "
+           "echo implant > \"$s/boot/.sb-test-implant\"; "
+           "done; sync" % good)
+        out = sh(con, "silverblue-update --verify %s" % bad_snap, timeout=T_UPDATE)
+        if "SILVERBLUE-VERIFY-FAIL snap=%s" % bad_snap not in out:
+            raise ConsoleError("tampered snapshot passed integrity verification:\n%s" % out)
+        out = sh(con, "SB_VERIFY_ON_ROLLBACK=strict silverblue-update --rollback",
+                 timeout=T_UPDATE)
+        if "no snapshot passed integrity verification" not in out:
+            raise ConsoleError("strict rollback did not refuse tampered snapshots:\n%s" % out)
+        print("[rollback] tampering detected and strict rollback refused; restoring")
+        sh(con,
+           "for s in /mnt/sbtop/root-*; do "
+           "[ \"$(basename \"$s\")\" = \"%s\" ] && continue; "
+           "rm -f \"$s/boot/.sb-test-implant\"; "
+           "done; sync && umount /mnt/sbtop" % good)
+        out = sh(con, "silverblue-update --verify %s" % bad_snap, timeout=T_UPDATE)
+        if "SILVERBLUE-VERIFY-OK snap=%s" % bad_snap not in out:
+            raise ConsoleError("restored snapshot failed integrity verification:\n%s" % out)
+        print("[rollback] restored snapshots verify OK; proceeding with boot-failure scenario")
+
         if BOOTLOADER == "grub":
             # An unloadable kernel is systemd-boot's scenario (boot counting recovers it);
             # stock GRUB cannot recover that unattended — after a failed automatic boot it

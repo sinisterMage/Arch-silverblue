@@ -225,6 +225,9 @@ do_install() {
         install_sdboot /mnt "$snap" "$pool_uuid" "$extra_opts"
     fi
 
+    marker "SILVERBLUE-INSTALL-STEP name=integrity-manifest"
+    generate_initial_manifest "$rootpart" "$snap" "$SB_INST_BOOTLOADER"
+
     sync
     umount -R /mnt
     trap - ERR

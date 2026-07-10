@@ -123,6 +123,9 @@ EOF
         install_sdboot /mnt "$snap" "$pool_uuid" "console=ttyS0,115200 console=tty0"
     fi
 
+    # --- Initial integrity manifest (the first rollback target must be verifiable) --------
+    generate_initial_manifest "$rootpart" "$snap" "$bootloader"
+
     sync
     umount -R /mnt
     marker "SILVERBLUE-INSTALL-OK snap=$snap uuid=$pool_uuid bootloader=$bootloader"

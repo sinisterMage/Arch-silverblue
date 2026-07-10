@@ -8,6 +8,8 @@
 load helper
 
 setup() {
+    # Pin the backend so the host's real init system can never leak into the check.
+    SB_INIT=systemd
     # shellcheck source=/dev/null
     source "$SB_REPO/src/init/silverblue-mark-good.sh"
 }

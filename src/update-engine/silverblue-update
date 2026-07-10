@@ -38,6 +38,9 @@
 DRY_RUN=false
 VERBOSE=false
 DO_ROLLBACK=false
+DO_VERIFY=false
+VERIFY_TARGET=""
+DO_GEN_MANIFEST=""
 BOOTLOADER=""
 SB_ROOT_DEV=""
 SB_POOL_UUID=""
@@ -93,6 +96,40 @@ if _libdir=$(resolve_lib_dir); then
     # shellcheck source=/dev/null
     source "$SB_LIB_DIR/grub-helpers.sh"
     unset _libdir
+fi
+
+# Init-system backends (root init detection for validate_root; health/reboot dispatch for the
+# scripts that source this engine). Optional: validate_root falls back to systemd behavior.
+resolve_init_lib() {
+    local self_dir d
+    self_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    for d in "$SB_LIB_DIR" "$self_dir" "$self_dir/../init" /usr/lib/silverblue; do
+        [[ -n "$d" && -f "$d/init-backends.sh" ]] && { printf '%s\n' "$d/init-backends.sh"; return 0; }
+    done
+    return 1
+}
+
+if _initlib=$(resolve_init_lib); then
+    # shellcheck source=/dev/null
+    source "$_initlib"
+    unset _initlib
+fi
+
+# Integrity manifests (HMAC-signed checksums of each snapshot's OS payload). Optional: the
+# engine warns and continues when absent, so a partial install degrades instead of breaking.
+resolve_integrity_lib() {
+    local self_dir d
+    self_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    for d in "$SB_LIB_DIR" "$self_dir" /usr/lib/silverblue; do
+        [[ -n "$d" && -f "$d/integrity.sh" ]] && { printf '%s\n' "$d/integrity.sh"; return 0; }
+    done
+    return 1
+}
+
+if _intlib=$(resolve_integrity_lib); then
+    # shellcheck source=/dev/null
+    source "$_intlib"
+    unset _intlib
 fi
 
 # ============================== Pure functions (unit-tested) ===============================
@@ -271,7 +308,7 @@ validate_root() {
     local root=$1
     local boot="$root/boot"
     if $DRY_RUN; then
-        log "DRY: validate $boot (>=1 kernel, >=1 initramfs, systemd-analyze verify)"
+        log "DRY: validate $boot (>=1 kernel, >=1 initramfs, unit verify)"
         return 0
     fi
     shopt -s nullglob
@@ -281,14 +318,37 @@ validate_root() {
     (( ${#initrds[@]} > 0 )) || { err "no initramfs under $boot"; return 1; }
     vlog "found kernels: ${kernels[*]##*/}"
     vlog "found initramfs: ${initrds[*]##*/}"
-    if [[ -e "$root$SB_VERIFY_UNIT" ]]; then
-        if ! sb_run "$ARCH_CHROOT" "$root" systemd-analyze verify "$SB_VERIFY_UNIT"; then
-            err "systemd-analyze verify reported errors for $SB_VERIFY_UNIT"
-            return 1
-        fi
-    else
-        vlog "skipping systemd-analyze verify ($SB_VERIFY_UNIT absent in new root)"
+    # Unit verification is init-specific; probe the new root (not the running system) so a
+    # derivative's openrc/dinit snapshot is not pushed through systemd-analyze.
+    local root_init=systemd
+    if declare -F detect_root_init >/dev/null; then
+        root_init=$(detect_root_init "$root")
     fi
+    case "$root_init" in
+        systemd)
+            if [[ -e "$root$SB_VERIFY_UNIT" ]]; then
+                if ! sb_run "$ARCH_CHROOT" "$root" systemd-analyze verify "$SB_VERIFY_UNIT"; then
+                    err "systemd-analyze verify reported errors for $SB_VERIFY_UNIT"
+                    return 1
+                fi
+            else
+                vlog "skipping systemd-analyze verify ($SB_VERIFY_UNIT absent in new root)"
+            fi
+            ;;
+        dinit)
+            if [[ -x "$root/usr/bin/dinitcheck" ]]; then
+                if ! sb_run "$ARCH_CHROOT" "$root" dinitcheck; then
+                    err "dinitcheck reported errors in the new root"
+                    return 1
+                fi
+            else
+                vlog "skipping dinitcheck (not present in new root)"
+            fi
+            ;;
+        *)
+            vlog "skipping unit verification (init=$root_init)"
+            ;;
+    esac
 }
 
 register_entry() {
@@ -359,6 +419,11 @@ discard_snapshot() {
     if [[ -d "$path" ]]; then
         sb_run "$BTRFS" subvolume delete "$path" || log "warn: could not delete subvolume $path"
     fi
+    # A discarded snapshot's integrity manifest must go with it (covers pruning, the EXIT
+    # trap's half-built-snapshot cleanup, and every future caller).
+    if declare -F delete_manifest >/dev/null; then
+        delete_manifest "$snap"
+    fi
 }
 
 # Newest snapshot that is not the currently running root.
@@ -369,6 +434,59 @@ previous_snapshot() {
         prev=$snap
     done < <(list_snapshots)
     [[ -n "$prev" ]] && printf '%s\n' "$prev"
+}
+
+# All non-current snapshots, newest first (rollback candidates in preference order).
+previous_snapshots() {
+    local snap out=()
+    while IFS= read -r snap; do
+        [[ "$snap" == "$CURRENT_SUBVOL" ]] && continue
+        out=("$snap" "${out[@]}")
+    done < <(list_snapshots)
+    (( ${#out[@]} )) && printf '%s\n' "${out[@]}"
+}
+
+# Apply the SB_VERIFY_ON_ROLLBACK policy to a rollback candidate: print the snapshot to roll
+# back into (stdout), or fail. Policies:
+#   off     no verification.
+#   warn    (default) verify the candidate; on mismatch log SILVERBLUE-VERIFY-WARN loudly and
+#           proceed anyway — on the unattended OnFailure path, refusing to roll back would
+#           turn one bad update into a boot loop.
+#   strict  newest-first, the first candidate that verifies wins; a manifest-less snapshot
+#           (pre-feature) is accepted with a note, a failed one is skipped. Nothing left ->
+#           fail WITHOUT arming a rollback (the caller dies; rollback.sh then holds the
+#           machine in emergency instead of rebooting).
+verified_rollback_target() {
+    local prev=$1 cand rc
+    if [[ "${SB_VERIFY_ON_ROLLBACK:-warn}" == off ]] || ! declare -F verify_manifest >/dev/null; then
+        printf '%s\n' "$prev"
+        return 0
+    fi
+    if $DRY_RUN; then
+        log "DRY: verify integrity manifest of $prev (policy: ${SB_VERIFY_ON_ROLLBACK:-warn})"
+        printf '%s\n' "$prev"
+        return 0
+    fi
+    if [[ "${SB_VERIFY_ON_ROLLBACK:-warn}" != strict ]]; then
+        rc=0; verify_manifest "$prev" || rc=$?
+        if (( rc == 1 )); then
+            log "SILVERBLUE-VERIFY-WARN snap=$prev"
+            err "warning: rolling back into $prev despite failed integrity verification (SB_VERIFY_ON_ROLLBACK=warn)"
+        fi
+        printf '%s\n' "$prev"
+        return 0
+    fi
+    while IFS= read -r cand; do
+        rc=0; verify_manifest "$cand" || rc=$?
+        case $rc in
+            0) printf '%s\n' "$cand"; return 0 ;;
+            2) log "note: $cand predates integrity manifests; accepting"
+               printf '%s\n' "$cand"; return 0 ;;
+            *) err "skipping rollback candidate $cand (failed integrity verification)" ;;
+        esac
+    done < <(previous_snapshots)
+    err "no snapshot passed integrity verification (SB_VERIFY_ON_ROLLBACK=strict)"
+    return 1
 }
 
 # ============================== Top-level flows ============================================
@@ -387,20 +505,27 @@ do_update() {
     log "    keep       : $SB_KEEP snapshots"
 
     ensure_toplevel_mounted
-    log "==> [1/6] Snapshot running root -> $NEW_SNAP"
+    log "==> [1/7] Snapshot running root -> $NEW_SNAP"
     create_snapshot "$NEW_SNAP"
-    log "==> [2/6] Upgrade packages in new root (pacman -Syu)"
+    log "==> [2/7] Upgrade packages in new root (pacman -Syu)"
     chroot_upgrade "$SB_TOPLEVEL_MNT/$NEW_SNAP"
-    log "==> [3/6] Validate new root (kernel, initramfs, unit verify)"
+    log "==> [3/7] Validate new root (kernel, initramfs, unit verify)"
     validate_root "$SB_TOPLEVEL_MNT/$NEW_SNAP"
-    log "==> [4/6] Register boot entry"
+    log "==> [4/7] Register boot entry"
     register_entry "$NEW_SNAP" "$label"
-    log "==> [5/6] Make it the next boot (permanent default unchanged)"
+    # After register_entry so the systemd-boot ESP copies exist and get recorded too.
+    log "==> [5/7] Write integrity manifest (HMAC-signed)"
+    if declare -F generate_manifest >/dev/null; then
+        generate_manifest "$NEW_SNAP"
+    else
+        log "warn: integrity library not found; skipping manifest"
+    fi
+    log "==> [6/7] Make it the next boot (permanent default unchanged)"
     case "$BOOTLOADER" in
         grub)         set_next_boot "$NEW_SNAP" ;;
         systemd-boot) vlog "systemd-boot: newest version '$NEW_SNAP' boots next automatically" ;;
     esac
-    log "==> [6/6] Prune snapshots beyond $SB_KEEP"
+    log "==> [7/7] Prune snapshots beyond $SB_KEEP"
     prune_snapshots
 
     UPDATE_COMMITTED=1
@@ -421,6 +546,7 @@ do_rollback() {
             die "no previous snapshot available to roll back to"
         fi
     fi
+    prev=$(verified_rollback_target "$prev") || die "rollback aborted: no snapshot passed integrity verification"
     log "==> Rollback: next boot -> $prev ($(label_for "$prev"))"
     set_next_boot "$prev"
     UPDATE_COMMITTED=1
@@ -428,15 +554,72 @@ do_rollback() {
     log "==> Done. Reboot to roll back into $prev"
 }
 
+# Verify integrity manifests: the named snapshot, or every snapshot that is not the running
+# root. Exits non-zero if any verification fails (an absent manifest is reported, not fatal).
+do_verify() {
+    local snap targets=() rc=0 vrc
+    declare -F verify_manifest >/dev/null || die "integrity library not available"
+    ensure_prereqs
+    ensure_toplevel_mounted
+    if [[ -n "$VERIFY_TARGET" ]]; then
+        targets=("$VERIFY_TARGET")
+    else
+        while IFS= read -r snap; do
+            [[ "$snap" == "$CURRENT_SUBVOL" ]] && continue
+            targets+=("$snap")
+        done < <(list_snapshots)
+    fi
+    (( ${#targets[@]} > 0 )) || die "no snapshots to verify under $SB_TOPLEVEL_MNT"
+    for snap in "${targets[@]}"; do
+        if [[ "$snap" == "$CURRENT_SUBVOL" ]]; then
+            log "note: $snap is the running root — a live root is mutable by design, so a"
+            log "      mismatch may reflect legitimate local changes (e.g. manual pacman use)"
+        fi
+        vrc=0; verify_manifest "$snap" || vrc=$?
+        (( vrc == 1 )) && rc=1
+    done
+    cleanup_toplevel
+    return "$rc"
+}
+
+# (Re)write the integrity manifest for one snapshot. Used by the installer for the initial
+# root (the live ISO's / is not Btrfs, so ensure_prereqs does not apply here; the installer
+# pre-mounts the toplevel and passes SB_TOPLEVEL_MNT/SB_EFI_DIR/SB_BOOTLOADER); also useful
+# to re-stamp a snapshot after intentional manual changes.
+do_generate_manifest() {
+    local snap=$1
+    declare -F generate_manifest >/dev/null || die "integrity library not available"
+    if ! $DRY_RUN; then
+        [[ ${EUID:-$(id -u)} -eq 0 ]] || die "must run as root"
+    fi
+    ensure_toplevel_mounted
+    log "==> Generate integrity manifest for $snap"
+    generate_manifest "$snap"
+    cleanup_toplevel
+    log "==> Done."
+}
+
 # ============================== Entry point ===============================================
 
 usage() {
     cat <<'EOF'
 Usage: silverblue-update [--dry-run] [--verbose] [--rollback]
+                         [--verify [SNAPSHOT]] [--generate-manifest SNAPSHOT]
 
-  (no args)    Snapshot the running root, upgrade it, validate it, and register it as the
-               next boot target without changing the permanent default.
-  --rollback   Set the previous snapshot as the next boot target (manual rollback).
+  (no args)    Snapshot the running root, upgrade it, validate it, write its integrity
+               manifest, and register it as the next boot target without changing the
+               permanent default.
+  --rollback   Set the previous snapshot as the next boot target (manual rollback). The
+               target's integrity manifest is checked first; SB_VERIFY_ON_ROLLBACK
+               (warn|strict|off, default warn) controls what a mismatch does.
+  --verify [SNAPSHOT]
+               Verify integrity manifests: the named snapshot, or every snapshot that is
+               not the running root. Verifying the running root is advisory only — a live
+               root is mutable by design. Exits non-zero if any verification fails.
+  --generate-manifest SNAPSHOT
+               (Re)write the integrity manifest for SNAPSHOT. Used by the installer for
+               the initial root; also re-stamps a snapshot after intentional manual
+               changes (e.g. pacman run outside the update engine).
   --dry-run    Print the planned steps without making any changes.
   --verbose    Verbose output (echo each privileged command).
   -h, --help   Show this help and exit.
@@ -449,6 +632,18 @@ parse_args() {
             --dry-run)     DRY_RUN=true ;;
             --verbose|-v)  VERBOSE=true ;;
             --rollback)    DO_ROLLBACK=true ;;
+            --verify)
+                DO_VERIFY=true
+                if [[ "${2:-}" == root-* ]]; then
+                    VERIFY_TARGET=$2
+                    shift
+                fi
+                ;;
+            --generate-manifest)
+                [[ -n "${2:-}" ]] || die "--generate-manifest needs a snapshot name"
+                DO_GEN_MANIFEST=$2
+                shift
+                ;;
             -h|--help)     usage; exit 0 ;;
             *)             die "unknown argument: $1 (try --help)" ;;
         esac
@@ -470,7 +665,15 @@ main() {
     parse_args "$@"
     trap on_exit EXIT
     load_runtime
-    if $DO_ROLLBACK; then do_rollback; else do_update; fi
+    if [[ -n "$DO_GEN_MANIFEST" ]]; then
+        do_generate_manifest "$DO_GEN_MANIFEST"
+    elif $DO_VERIFY; then
+        do_verify
+    elif $DO_ROLLBACK; then
+        do_rollback
+    else
+        do_update
+    fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
